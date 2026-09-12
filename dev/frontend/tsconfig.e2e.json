@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo"
+  },
+  "include": [
+    "playwright.config.ts",
+    "e2e/tests/**/*.ts",
+    "e2e/contracts/**/*.ts",
+    "e2e/fixtures/**/*.ts"
+  ]
+}
