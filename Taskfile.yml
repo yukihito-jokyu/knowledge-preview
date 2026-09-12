@@ -1,0 +1,70 @@
+version: '3'
+
+vars:
+  E2E_RUN_ID: '{{.E2E_RUN_ID | default ""}}'
+  COMPOSE: docker compose -f dev/compose.test.yaml
+
+env:
+  E2E_RUN_ID: '{{.E2E_RUN_ID}}'
+  COMPOSE_PROJECT_NAME: 'knowledge-e2e-{{.E2E_RUN_ID}}'
+
+tasks:
+  e2e:install:
+    desc: E2Eを含むフロントエンドの固定依存をインストールする
+    cmds:
+      - pnpm --dir dev/frontend install --frozen-lockfile
+
+  e2e:config:
+    desc: 横断環境の設定とCompose定義を検証する（起動しない）
+    preconditions:
+      - sh: 'test -n "$E2E_RUN_ID" && printf "%s" "$E2E_RUN_ID" | LC_ALL=C grep -Eq "^[a-z0-9][a-z0-9_-]*$"'
+        msg: 'E2E_RUN_IDに実行固有の英小文字・数字・ハイフン・アンダースコアを指定してください。'
+    cmds:
+      - '{{.COMPOSE}} config --quiet'
+
+  e2e:env:up:
+    desc: テスト用サービスを構築・起動する（データ初期化とテストは別）
+    cmds:
+      - task: e2e:config
+      - '{{.COMPOSE}} --profile commands build'
+      - '{{.COMPOSE}} run --rm --no-deps certificates'
+      - '{{.COMPOSE}} up --detach --wait --wait-timeout 120 postgres oauth backend frontend proxy'
+
+  e2e:env:init:
+    desc: 起動済みSPA・API・DBの疎通を確認する（業務seedは別）
+    cmds:
+      - task: e2e:config
+      - '{{.COMPOSE}} run --rm --no-deps init'
+
+  e2e:test:
+    desc: 初期化済み環境でPlaywrightを実行する
+    cmds:
+      - task: e2e:config
+      - defer: { task: 'e2e:artifacts' }
+      - '{{.COMPOSE}} up --no-deps --force-recreate --abort-on-container-exit --exit-code-from test test'
+
+  e2e:env:seed:
+    desc: 業務migration・fixture投入の入口（対応Issueで実装するまで失敗する）
+    cmds:
+      - task: e2e:config
+      - '{{.COMPOSE}} run --rm --no-deps init node init/business-seed.mjs'
+
+  e2e:artifacts:
+    desc: テストコンテナの成果物で固定保存先の前回分を置き換える
+    cmds:
+      - task: e2e:config
+      - rm -rf dev/frontend/e2e/artifacts
+      - mkdir -p dev/frontend/e2e/artifacts
+      - '{{.COMPOSE}} cp test:/artifacts/. dev/frontend/e2e/artifacts/'
+
+  e2e:env:down:
+    desc: 指定した実行のコンテナ・ボリュームを削除する
+    cmds:
+      - task: e2e:config
+      - '{{.COMPOSE}} --profile commands down --volumes --remove-orphans'
+
+  e2e:check:
+    desc: 構築・初期化・E2Eを順に実行し、失敗時も後片付けする
+    cmds:
+      - task: e2e:config
+      - bash dev/frontend/e2e/scripts/check.sh
