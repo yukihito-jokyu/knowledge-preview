@@ -1,2 +1,4 @@
 DS_Store
 docs
+dev/frontend/node_modules
+dev/frontend/dist
