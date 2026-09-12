@@ -69,8 +69,8 @@ router := httpinterface.NewRouter(readiness, logger)
 
 | エンドポイント | 処理 | 成功時 | 失敗時 |
 | --- | --- | --- | --- |
-| `GET /healthz` | プロセスの応答を確認。DBへアクセスしない | 204 | 専用の失敗分岐なし |
-| `GET /readyz` | 2秒の期限でUse caseからDBの `Ping` を呼ぶ | 204 | 共通エラーレスポンス。通常の接続エラーは500 |
+| `GET /health` | プロセスの応答を確認。DBへアクセスしない | 204 | 専用の失敗分岐なし |
+| `GET /ready` | 2秒の期限でUse caseからDBの `Ping` を呼ぶ | 204 | 共通エラーレスポンス。通常の接続エラーは500 |
 
 ルーターは `gin.New()` で作成し、リクエストログと `gin.Recovery()` を登録する。
 信頼するプロキシは現在 `nil` に設定している。
