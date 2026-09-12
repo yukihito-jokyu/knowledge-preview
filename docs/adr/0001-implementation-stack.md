@@ -54,8 +54,8 @@ React SPA (Vite) ── HTTPS / JSON ──> Go API (Gin)
 | 目的 | 設定ファイル | ローカル / CI コマンド |
 | --- | --- | --- |
 | クライアント依存・ビルド | `client/package.json`、`client/pnpm-lock.yaml`、`client/vite.config.ts` | `pnpm --dir client install --frozen-lockfile`、`pnpm --dir client lint`、`pnpm --dir client test`、`pnpm --dir client build` |
-| サーバー依存・検査 | `server/go.mod`、`server/go.sum`、`server/.golangci.yml` | `go -C server test ./...`、`golangci-lint run ./server/...`、`go -C server vet ./...` |
-| DB・migration | `server/migrations/*.sql`、`compose.yaml` | `docker compose up -d postgres minio`、`migrate -path server/migrations -database "$DATABASE_URL" up`、`migrate -path server/migrations -database "$DATABASE_URL" down 1` |
+| サーバー依存・検査 | `dev/backend/go.mod`、`dev/backend/go.sum`、`dev/backend/.golangci.yml` | `go -C dev/backend test ./...`、`golangci-lint run ./dev/backend/...`、`go -C dev/backend vet ./...` |
+| DB・migration | `dev/backend/migrations/*.sql`、`compose.yaml` | `docker compose up -d postgres minio`、`migrate -path dev/backend/migrations -database "$DATABASE_URL" up`、`migrate -path dev/backend/migrations -database "$DATABASE_URL" down 1` |
 | デプロイ・横断試験 | `compose.yaml`、`compose.test.yaml`、各サービスの`Dockerfile`、`e2e/` | `docker compose up --build -d`、`docker compose -f compose.test.yaml up --exit-code-from test`、`pnpm --dir e2e exec playwright test` |
 | CI | `.github/workflows/ci.yml` | push と pull request で、依存固定確認、lint、unit test、migration適用、Playwright E2E、Docker Compose buildを実行する。 |
 

@@ -1,0 +1,39 @@
+version: '3'
+
+vars:
+  GOLANGCI_LINT_VERSION:
+    sh: cat .golangci-lint-version
+
+tasks:
+  check-tools:
+    internal: true
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: 'Install golangci-lint v{{.GOLANGCI_LINT_VERSION}} (https://golangci-lint.run/docs/welcome/install/)'
+      - sh: golangci-lint version | grep -Eq 'version {{regexQuoteMeta .GOLANGCI_LINT_VERSION}}([[:space:]]|$)'
+        msg: 'Use golangci-lint v{{.GOLANGCI_LINT_VERSION}}'
+
+  fmt:
+    desc: 空行・書式・importを自動整形する
+    cmds:
+      - task: check-tools
+      - golangci-lint run --fix --enable-only wsl_v5 ./...
+      - golangci-lint fmt ./...
+
+  lint:
+    desc: 設定・Lint・整形違反を検査する（書き換えなし）
+    cmds:
+      - task: check-tools
+      - golangci-lint config verify
+      - golangci-lint run ./...
+
+  test:
+    desc: 全Goテストを実行する
+    cmds:
+      - go test ./...
+
+  check:
+    desc: Lint・整形検査とテストを順に実行する
+    cmds:
+      - task: lint
+      - task: test
