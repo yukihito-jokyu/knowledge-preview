@@ -1,0 +1,31 @@
+name: Backend quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: arduino/setup-task@v3
+        with:
+          version: '3.45.5'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: dev/backend/go.mod
+          cache-dependency-path: dev/backend/go.sum
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version-file: .golangci-lint-version
+          working-directory: dev/backend
+          # Install the pinned tool; task check owns validation below.
+          install-only: true
+      - name: Check formatting, lint and tests
+        run: task --dir dev/backend check
