@@ -1,0 +1,7 @@
+import { test, expect } from '@playwright/test';
+
+test('<条件と期待結果を一文にした名前>', async ({ request }) => {
+  // 実APIへ送信し、ステータス・JSON・ヘッダー・秘匿項目を検証する。
+  // パスや期待値は対応Issueで確定する。秘密値をassertionへ露出させない。
+  throw new Error('Issueで確定したAPI契約を実装してください');
+});
