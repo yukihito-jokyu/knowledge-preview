@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:18.1-bookworm@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a
+    environment:
+      POSTGRES_DB: knowledge_e2e
+      POSTGRES_USER: knowledge_e2e
+      POSTGRES_PASSWORD: e2e-only-password
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U knowledge_e2e -d knowledge_e2e]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/backend/Dockerfile
+    environment:
+      APP_ENV: test
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://knowledge_e2e:e2e-only-password@postgres:5432/knowledge_e2e?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/frontend/Dockerfile
+
+  certificates:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/proxy/Dockerfile
+    entrypoint: [sh, /usr/local/bin/certificates.sh]
+    volumes:
+      - certificates:/certs
+    profiles: [commands]
+
+  oauth:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/init/Dockerfile.tools
+    command: [node, oauth/server.mjs]
+
+  proxy:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/proxy/Dockerfile
+    volumes:
+      - certificates:/certs:ro
+    networks:
+      default:
+        aliases:
+          [app.knowledge.test, preview.knowledge.test, oauth.knowledge.test]
+    depends_on: [backend, frontend, oauth]
+
+  init:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/init/Dockerfile.tools
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - certificates:/certs:ro
+    profiles: [commands]
+
+  test:
+    build:
+      context: .
+      dockerfile: frontend/e2e/environment/runner/Dockerfile
+    volumes:
+      - certificates:/certs:ro
+      - artifacts:/artifacts
+    profiles: [commands]
+
+volumes:
+  postgres-data:
+  certificates:
+  artifacts:

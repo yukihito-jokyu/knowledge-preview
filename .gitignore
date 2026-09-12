@@ -1,4 +1,9 @@
 DS_Store
-docs
+docs/*
+!docs/testing.md
 dev/frontend/node_modules
 dev/frontend/dist
+dev/frontend/e2e/.env
+dev/frontend/e2e/artifacts/
+/.codex/ponytail-state/
+/.codex/ponytail-config/

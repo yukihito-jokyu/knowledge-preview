@@ -12,7 +12,10 @@
     "fmt:check": "oxfmt --check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e:list": "playwright test --config playwright.config.ts --list",
+    "typecheck:e2e": "tsc --project tsconfig.e2e.json --pretty false"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "1.1.23",
@@ -36,6 +39,7 @@
     "tailwind-merge": "3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@stylistic/eslint-plugin": "5.10.0",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/router-plugin": "1.168.36",

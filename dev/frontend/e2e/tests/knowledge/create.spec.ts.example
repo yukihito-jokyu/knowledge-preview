@@ -1,0 +1,10 @@
+import { test, expect } from '../../fixtures/test';
+
+// 対応Issueで具体化し、意味のある名前の.spec.tsへコピーする。
+// 規約の「知識登録」（X02）に対応。対象Issue・初期データ・操作・期待結果を記載する。
+test('<条件と期待結果を一文にした名前>', async ({ page }) => {
+  // Arrange: 専用fixtureと実OAuth経由のログインを使う。
+  // Act: 確定した画面の入力・保存を操作する。
+  // Assert: API結果と再読込後の表示を検証する。
+  throw new Error('Issueで具体化したシナリオを実装してください');
+});

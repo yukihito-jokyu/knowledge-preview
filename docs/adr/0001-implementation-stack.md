@@ -56,7 +56,7 @@ React SPA (Vite) ── HTTPS / JSON ──> Go API (Gin)
 | クライアント依存・ビルド | `client/package.json`、`client/pnpm-lock.yaml`、`client/vite.config.ts` | `pnpm --dir client install --frozen-lockfile`、`pnpm --dir client lint`、`pnpm --dir client test`、`pnpm --dir client build` |
 | サーバー依存・検査 | `dev/backend/go.mod`、`dev/backend/go.sum`、`dev/backend/.golangci.yml` | `go -C dev/backend test ./...`、`golangci-lint run ./dev/backend/...`、`go -C dev/backend vet ./...` |
 | DB・migration | `dev/backend/migrations/*.sql`、`compose.yaml` | `docker compose up -d postgres minio`、`migrate -path dev/backend/migrations -database "$DATABASE_URL" up`、`migrate -path dev/backend/migrations -database "$DATABASE_URL" down 1` |
-| デプロイ・横断試験 | `compose.yaml`、`compose.test.yaml`、各サービスの`Dockerfile`、`e2e/` | `docker compose up --build -d`、`docker compose -f compose.test.yaml up --exit-code-from test`、`pnpm --dir e2e exec playwright test` |
+| デプロイ・横断試験 | `compose.yaml`、`dev/compose.test.yaml`、各サービスの`Dockerfile`、`dev/frontend/e2e/`、ルート`Taskfile.yml` | `docker compose up --build -d`。横断試験は実行固有の`E2E_RUN_ID`を指定し、`task e2e:env:up`、`task e2e:env:init`、`task e2e:test`、`task e2e:env:down`を順に実行する。準備と実装状況は[横断検証規約](../testing.md)を参照する。 |
 | CI | `.github/workflows/ci.yml` | push と pull request で、依存固定確認、lint、unit test、migration適用、Playwright E2E、Docker Compose buildを実行する。 |
 
 CIはGitHub OAuthとCloudflareの実サービスを呼ばない。テスト用OAuthプロバイダをGo APIのポートで差し替え、DBとMinIOはDocker Composeの使い捨てコンテナを使用する。Cloudflareの設定は構成ファイルとテストで検証し、ブラウザE2Eはローカルのプレビュー用ホスト名を使用する。
