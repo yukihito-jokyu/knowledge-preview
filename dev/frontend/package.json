@@ -11,7 +11,7 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
