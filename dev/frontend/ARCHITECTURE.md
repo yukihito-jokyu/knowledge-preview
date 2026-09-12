@@ -155,7 +155,7 @@ features/knowledge/model/knowledge-schema.test.ts
 - UI部品はVitestとTesting Libraryで、表示・操作・アクセシビリティを検証する。
 - `model/` はquery key、mutation後の無効化、入力検証を検証する。
 - `lib/markdown/` は生HTMLを描画しないことを回帰テストする。
-- API結合やOAuthを含むブラウザ横断の確認は、将来の `e2e/` でPlaywrightが担う。
+- API結合やOAuthを含むブラウザ横断の確認は、`dev/frontend/e2e/` でPlaywrightが担う。Vitestは `e2e/` を対象から除外する。配置と実行方法は [E2E README](e2e/README.md)、該当条件、責務、シナリオ、環境、CI完了条件は [横断検証規約](../../docs/testing.md) に従う。
 
 実装変更後は、次をすべて実行する。
 
