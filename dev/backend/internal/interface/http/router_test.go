@@ -27,7 +27,7 @@ func TestHealthEndpoints(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	for _, path := range []string{"/healthz", "/readyz"} {
+	for _, path := range []string{"/health", "/ready"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 
