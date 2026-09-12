@@ -101,6 +101,8 @@ router := httpinterface.NewRouter(readiness, logger)
 
 ## 検証範囲
 
+実フロントエンドとのAPI契約、認証Cookie、ブラウザE2E、公開閲覧、回帰の該当条件と完了条件は [横断検証規約](../../docs/testing.md) に従う。各層のテストは本ディレクトリに、横断テストは`dev/frontend/e2e/` に配置する。
+
 [config_test.go](internal/config/config_test.go) は必須設定とデフォルト値を検証する。
 [router_test.go](internal/interface/http/router_test.go) はfakeを使い、ヘルスチェック成功時の204とリクエストIDを検証する。
 実DB接続、readiness失敗時、各ドメインエラーのHTTP変換を個別に検証するテストは、現在は未実装である。
