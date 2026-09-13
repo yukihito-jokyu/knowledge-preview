@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/config"
+	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/htmlsafe"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/postgres"
+	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/s3"
 	httpinterface "github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/interface/http"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/usecase"
 )
@@ -37,6 +39,36 @@ func main() {
 
 	readiness := usecase.NewReadinessUseCase(pool)
 	router := httpinterface.NewRouter(readiness, logger)
+
+	knowledgeConfig, err := config.LoadKnowledge()
+	if err != nil {
+		logger.Error("knowledge configuration is invalid", "error", err)
+		os.Exit(1)
+	}
+
+	var objects usecase.KnowledgeObjects = s3.UnavailableObjects{}
+	if knowledgeConfig.Endpoint != "" {
+		objects, err = s3.New(
+			knowledgeConfig.Endpoint,
+			knowledgeConfig.Bucket,
+			knowledgeConfig.AccessKey,
+			knowledgeConfig.SecretKey,
+			knowledgeConfig.Secure,
+		)
+		if err != nil {
+			logger.Error("object storage configuration is invalid")
+			os.Exit(1)
+		}
+	}
+
+	knowledge := usecase.NewKnowledgeUseCase(
+		postgres.NewKnowledgeRepository(pool),
+		objects,
+		htmlsafe.New(),
+		usecase.DenySessions{},
+	)
+	// #19で認証の検証とプライマリDBによるセッション確認の両方を接続する。
+	httpinterface.RegisterKnowledge(router, knowledge, nil, knowledgeConfig.AppOrigin, knowledgeConfig.PreviewOrigin)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
