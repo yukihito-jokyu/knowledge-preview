@@ -18,7 +18,7 @@ test("未実装のOAuth認可へアクセスすると、未実装エラーが返
   expect(response.status()).toBe(501);
 });
 
-test("未実装の公開配信へアクセスすると、未実装エラーが返る", async ({ request }) => {
+test("公開配信の未指定URLへアクセスすると、リソースが見つからない", async ({ request }) => {
   const response = await request.get("https://preview.knowledge.test/");
-  expect(response.status()).toBe(501);
+  expect(response.status()).toBe(404);
 });

@@ -3,8 +3,9 @@ WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 go build -o /api ./cmd/api
+RUN CGO_ENABLED=0 go build -p=1 -o /test-api ./cmd/e2etest
 FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
-COPY --from=build /api /usr/local/bin/api
+COPY --from=build /test-api /usr/local/bin/test-api
+COPY backend/migrations /migrations
 USER node
-ENTRYPOINT ["api"]
+ENTRYPOINT ["test-api"]

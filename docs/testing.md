@@ -179,6 +179,8 @@ E2Eの依存とコマンドは`dev/frontend/package.json`・`dev/frontend/pnpm-l
 
 実行手順・コマンド一覧は [E2E README](../dev/frontend/e2e/README.md) に集約し、実際の定義は [ルートTaskfile](../Taskfile.yml) を正とする。各層の検証方法は各層のARCHITECTURE.mdを参照する。ディレクトリやサービスを増やす際に、同じ手順を別のREADMEへ複製しない。
 
+手動で画面を操作する場合は、[手動検証の手順](../dev/frontend/e2e/README.md#手動で画面を操作する)の`manual:*`を使う。自動E2Eとは別のCompose projectで起動し、停止時はデータを保持する。専用Chromiumの一時profileだけにCA・名前解決・テスト認証を設定し、OSの信頼ストアは変更しない。この認証代替による手動確認を、実OAuthの検証成功として扱わない。
+
 作成・修正時は [e2e-implement](../.agents/skills/e2e-implement/SKILL.md)、レビュー時は [e2e-review](../.agents/skills/e2e-review/SKILL.md) を利用する。スキルは作業手順を提供し、本書の規約を重複定義しない。
 
 ## CIと完了条件

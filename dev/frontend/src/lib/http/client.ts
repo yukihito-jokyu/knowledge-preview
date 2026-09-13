@@ -20,17 +20,47 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const responseMessage = error.response?.data;
+    const body = error.response?.data;
+
+    const envelope =
+      typeof body === "object" && body !== null && "error" in body ? body.error : body;
+
+    const data = typeof envelope === "object" && envelope !== null ? envelope : {};
 
     const message =
-      typeof responseMessage === "object" &&
-      responseMessage !== null &&
-      "message" in responseMessage &&
-      typeof responseMessage.message === "string"
-        ? responseMessage.message
-        : error.message;
+      "message" in data && typeof data.message === "string" ? data.message : "API request failed";
 
-    return Promise.reject(new ApiError(message, error.response?.status ?? 0, error.code));
+    const code = "code" in data && typeof data.code === "string" ? data.code : error.code;
+
+    const details =
+      "details" in data && Array.isArray(data.details)
+        ? data.details.flatMap((item: unknown) => {
+            if (typeof item !== "object" || item === null) return [];
+            return [
+              {
+                field: "field" in item && typeof item.field === "string" ? item.field : undefined,
+                reason:
+                  "reason" in item && typeof item.reason === "string" ? item.reason : undefined,
+                line:
+                  "line" in item &&
+                  typeof item.line === "number" &&
+                  Number.isSafeInteger(item.line) &&
+                  item.line > 0
+                    ? item.line
+                    : undefined,
+                column:
+                  "column" in item &&
+                  typeof item.column === "number" &&
+                  Number.isSafeInteger(item.column) &&
+                  item.column > 0
+                    ? item.column
+                    : undefined,
+              },
+            ];
+          })
+        : [];
+
+    return Promise.reject(new ApiError(message, error.response?.status ?? 0, code, details));
   },
 );
 

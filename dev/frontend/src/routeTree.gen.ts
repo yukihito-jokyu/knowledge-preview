@@ -15,6 +15,7 @@ import { Route as AuthenticatedKnowledgeIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedKnowledgeNewRouteImport } from './routes/_authenticated/knowledge/new'
 import { Route as AuthenticatedMcpTokensIndexRouteImport } from './routes/_authenticated/mcp-tokens/index'
 import { Route as PublicKnowledgePublicIdRouteImport } from './routes/public/knowledge/$publicId'
+import { Route as AuthenticatedKnowledgeDraftsDraftIdEditRouteImport } from './routes/_authenticated/knowledge-drafts/$draftId/edit'
 import { Route as AuthenticatedKnowledgeKnowledgeIdEditRouteImport } from './routes/_authenticated/knowledge/$knowledgeId/edit'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
@@ -59,6 +60,16 @@ const PublicKnowledgePublicIdRoute = PublicKnowledgePublicIdRouteImport.update({
 } as any).lazy(() =>
   import('./routes/public/knowledge/$publicId.lazy').then((d) => d.Route),
 )
+const AuthenticatedKnowledgeDraftsDraftIdEditRoute =
+  AuthenticatedKnowledgeDraftsDraftIdEditRouteImport.update({
+    id: '/knowledge-drafts/$draftId/edit',
+    path: '/knowledge-drafts/$draftId/edit',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any).lazy(() =>
+    import('./routes/_authenticated/knowledge-drafts/$draftId/edit.lazy').then(
+      (d) => d.Route,
+    ),
+  )
 const AuthenticatedKnowledgeKnowledgeIdEditRoute =
   AuthenticatedKnowledgeKnowledgeIdEditRouteImport.update({
     id: '/knowledge/$knowledgeId/edit',
@@ -77,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/public/knowledge/$publicId': typeof PublicKnowledgePublicIdRoute
   '/knowledge/': typeof AuthenticatedKnowledgeIndexRoute
   '/mcp-tokens/': typeof AuthenticatedMcpTokensIndexRoute
+  '/knowledge-drafts/$draftId/edit': typeof AuthenticatedKnowledgeDraftsDraftIdEditRoute
   '/knowledge/$knowledgeId/edit': typeof AuthenticatedKnowledgeKnowledgeIdEditRoute
 }
 export interface FileRoutesByTo {
@@ -86,6 +98,7 @@ export interface FileRoutesByTo {
   '/public/knowledge/$publicId': typeof PublicKnowledgePublicIdRoute
   '/knowledge': typeof AuthenticatedKnowledgeIndexRoute
   '/mcp-tokens': typeof AuthenticatedMcpTokensIndexRoute
+  '/knowledge-drafts/$draftId/edit': typeof AuthenticatedKnowledgeDraftsDraftIdEditRoute
   '/knowledge/$knowledgeId/edit': typeof AuthenticatedKnowledgeKnowledgeIdEditRoute
 }
 export interface FileRoutesById {
@@ -96,6 +109,7 @@ export interface FileRoutesById {
   '/public/knowledge/$publicId': typeof PublicKnowledgePublicIdRoute
   '/_authenticated/knowledge/': typeof AuthenticatedKnowledgeIndexRoute
   '/_authenticated/mcp-tokens/': typeof AuthenticatedMcpTokensIndexRoute
+  '/_authenticated/knowledge-drafts/$draftId/edit': typeof AuthenticatedKnowledgeDraftsDraftIdEditRoute
   '/_authenticated/knowledge/$knowledgeId/edit': typeof AuthenticatedKnowledgeKnowledgeIdEditRoute
 }
 export interface FileRouteTypes {
@@ -107,6 +121,7 @@ export interface FileRouteTypes {
     | '/public/knowledge/$publicId'
     | '/knowledge/'
     | '/mcp-tokens/'
+    | '/knowledge-drafts/$draftId/edit'
     | '/knowledge/$knowledgeId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -116,6 +131,7 @@ export interface FileRouteTypes {
     | '/public/knowledge/$publicId'
     | '/knowledge'
     | '/mcp-tokens'
+    | '/knowledge-drafts/$draftId/edit'
     | '/knowledge/$knowledgeId/edit'
   id:
     | '__root__'
@@ -125,6 +141,7 @@ export interface FileRouteTypes {
     | '/public/knowledge/$publicId'
     | '/_authenticated/knowledge/'
     | '/_authenticated/mcp-tokens/'
+    | '/_authenticated/knowledge-drafts/$draftId/edit'
     | '/_authenticated/knowledge/$knowledgeId/edit'
   fileRoutesById: FileRoutesById
 }
@@ -178,6 +195,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PublicKnowledgePublicIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/knowledge-drafts/$draftId/edit': {
+      id: '/_authenticated/knowledge-drafts/$draftId/edit'
+      path: '/knowledge-drafts/$draftId/edit'
+      fullPath: '/knowledge-drafts/$draftId/edit'
+      preLoaderRoute: typeof AuthenticatedKnowledgeDraftsDraftIdEditRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/knowledge/$knowledgeId/edit': {
       id: '/_authenticated/knowledge/$knowledgeId/edit'
       path: '/knowledge/$knowledgeId/edit'
@@ -192,6 +216,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedKnowledgeNewRoute: typeof AuthenticatedKnowledgeNewRoute
   AuthenticatedKnowledgeIndexRoute: typeof AuthenticatedKnowledgeIndexRoute
   AuthenticatedMcpTokensIndexRoute: typeof AuthenticatedMcpTokensIndexRoute
+  AuthenticatedKnowledgeDraftsDraftIdEditRoute: typeof AuthenticatedKnowledgeDraftsDraftIdEditRoute
   AuthenticatedKnowledgeKnowledgeIdEditRoute: typeof AuthenticatedKnowledgeKnowledgeIdEditRoute
 }
 
@@ -199,6 +224,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedKnowledgeNewRoute: AuthenticatedKnowledgeNewRoute,
   AuthenticatedKnowledgeIndexRoute: AuthenticatedKnowledgeIndexRoute,
   AuthenticatedMcpTokensIndexRoute: AuthenticatedMcpTokensIndexRoute,
+  AuthenticatedKnowledgeDraftsDraftIdEditRoute:
+    AuthenticatedKnowledgeDraftsDraftIdEditRoute,
   AuthenticatedKnowledgeKnowledgeIdEditRoute:
     AuthenticatedKnowledgeKnowledgeIdEditRoute,
 }

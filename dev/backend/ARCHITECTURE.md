@@ -1,25 +1,27 @@
 # バックエンドのアーキテクチャ
 
 この文書は、Goバックエンドの各パッケージの責務と、実装を追加する場所を定める。
-現在はGinによるHTTP APIとpgxによるPostgreSQL接続を実装し、ヘルスチェックを提供している。
+GinによるHTTP API、pgxによるPostgreSQL接続、ヘルスチェックと知識の保存・隔離配信を実装している。
+知識APIの認証は #19 の接続待ちで、標準起動では管理APIを401で拒否する。契約・共有schema・設定・検証は [KNOWLEDGE.md](KNOWLEDGE.md) を参照する。
 開発コマンドは [Taskfile.yml](Taskfile.yml)、Lint・整形の設定は [.golangci.yml](.golangci.yml)、
 golangci-lintの指定バージョンは [.golangci-lint-version](.golangci-lint-version) を参照する。
 
 ## パッケージの責務
 
 HTTPの受付、アプリケーションの処理、外部技術へのアクセスを分ける。
-これらの実装を生成して接続する場所は `cmd/api` とする。
+これらの実装を生成して接続する場所は `cmd/` 配下の各実行プログラムとする。
 
 | 配置 | 責務 | 現在の実装 |
 | --- | --- | --- |
 | `cmd/api` | 設定読込み、依存の組立て、サーバーの起動・終了 | [main.go](cmd/api/main.go) |
+| `cmd/e2etest` | E2E専用サーバーの起動、テスト用認証・データ準備、依存の組立て | [main.go](cmd/e2etest/main.go) |
 | `internal/config` | 環境変数の読込みと設定の検証 | [config.go](internal/config/config.go) |
 | `internal/domain` | 業務上の概念・ルール・エラー | [error.go](internal/domain/error.go) |
 | `internal/usecase` | 処理の流れと、処理に必要な外部依存の抽象 | [health.go](internal/usecase/health.go) |
 | `internal/interface/http` | ルーティング、リクエストの受付、middleware | [router.go](internal/interface/http/router.go)、[health.go](internal/interface/http/health.go) |
 | `internal/interface/response` | レスポンスの型、エラーからHTTP応答への変換と出力 | [error.go](internal/interface/response/error.go) |
 | `internal/infrastructure/postgres` | PostgreSQL接続など、pgxを使う実装 | [pool.go](internal/infrastructure/postgres/pool.go) |
-| `migrations` | DBスキーマ変更のSQLを置く場所 | 現在は空。実行処理も未実装 |
+| `migrations` | DBスキーマ変更のSQLを置く場所 | [知識schema](migrations/000001_knowledge.up.sql)。適用はgolang-migrateで実施 |
 
 ## ファイルとディレクトリの分け方
 
@@ -109,3 +111,11 @@ router := httpinterface.NewRouter(readiness, logger)
 
 全体の検証はリポジトリルートから `task --dir dev/backend check` で実行する。
 構成を変更した際は、この文書の配置例と実装へのリンクも更新する。
+
+## 知識の追加配置
+
+`domain/knowledge.go` と `domain/markdown.go` が型・本文検証、`usecase/knowledge.go` が処理と外部interface、`interface/http/knowledge.go` が受付、`interface/response/knowledge.go` が所有者DTO、`infrastructure/postgres/knowledge.go` がSQL transactionを担う。独立した外部技術として `infrastructure/htmlsafe` がHTML安全化、`infrastructure/s3` がMinIO/S3を扱う。`cmd/collect-knowledge` は未参照object回収CLIである。Use caseへGin/pgx/S3具体型は渡さない。
+
+## Goコードの改行
+
+`task --dir dev/backend fmt` は `golines` で長い行を120文字を目安に改行する。テーブル駆動テストの構造体ケースは、短い場合も各フィールドを別行に書く。既存の複数行表記は整形後も維持する。文字列リテラルの内部は自動分割しない。`task --dir dev/backend check` で整形違反も検査する。
