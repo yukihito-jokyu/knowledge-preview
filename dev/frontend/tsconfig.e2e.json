@@ -5,6 +5,7 @@
   },
   "include": [
     "playwright.config.ts",
+    "e2e/scripts/**/*.ts",
     "e2e/tests/**/*.ts",
     "e2e/contracts/**/*.ts",
     "e2e/fixtures/**/*.ts"

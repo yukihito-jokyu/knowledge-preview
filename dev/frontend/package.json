@@ -14,7 +14,7 @@
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:e2e": "playwright test --config playwright.config.ts",
-    "test:e2e:list": "playwright test --config playwright.config.ts --list",
+    "test:e2e:list": "playwright test --config playwright.config.ts --list --reporter=list",
     "typecheck:e2e": "tsc --project tsconfig.e2e.json --pretty false"
   },
   "dependencies": {
