@@ -19,11 +19,36 @@ services:
       dockerfile: frontend/e2e/environment/backend/Dockerfile
     environment:
       APP_ENV: test
+      E2E_RUN_ID: ${E2E_RUN_ID:?E2E_RUN_ID is required}
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://knowledge_e2e:e2e-only-password@postgres:5432/knowledge_e2e?sslmode=disable
+      APP_ORIGIN: https://app.knowledge.test
+      PREVIEW_ORIGIN: https://preview.knowledge.test
+      S3_ENDPOINT: minio:9000
+      S3_BUCKET: knowledge-private
+      S3_ACCESS_KEY: e2e-access-key
+      S3_SECRET_KEY: e2e-secret-key
+      S3_INSECURE: "true"
+      E2E_MIGRATIONS_DIR: /migrations
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
+    command: [server, /data, --address, ":9000"]
+    environment:
+      MINIO_ROOT_USER: e2e-access-key
+      MINIO_ROOT_PASSWORD: e2e-secret-key
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [CMD, mc, ready, local]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   frontend:
     build:
@@ -78,5 +103,6 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:
   certificates:
   artifacts:

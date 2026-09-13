@@ -1,0 +1,5 @@
+# 自動E2Eとは別projectで、手動操作用のHTTPSだけをホストへ公開する。
+services:
+  proxy:
+    ports:
+      - "127.0.0.1:443:443"

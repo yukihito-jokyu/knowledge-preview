@@ -3,7 +3,7 @@ const targets = [
   ["https://app.knowledge.test/login", 200],
   ["https://app.knowledge.test/api/ready", 204],
   ["https://oauth.knowledge.test/health", 200],
-  ["https://preview.knowledge.test/", 501],
+  ["https://preview.knowledge.test/", 404],
 ];
 
 for (const [url, expected] of targets) {
@@ -23,4 +23,4 @@ for (const [url, expected] of targets) {
   }
   if (!ready) throw new Error(`Environment readiness failed: ${url}`);
 }
-console.log("SPA/API/DB readiness passed. Business migration and seed are not implemented.");
+console.log("SPA/API/DB/preview readiness passed. Business fixtures are created by the E2E tests.");

@@ -3,12 +3,55 @@ version: '3'
 vars:
   E2E_RUN_ID: '{{.E2E_RUN_ID | default ""}}'
   COMPOSE: docker compose -f dev/compose.test.yaml
+  MANUAL_COMPOSE: docker compose --project-name knowledge-manual -f dev/compose.test.yaml -f dev/compose.manual.yaml
 
 env:
   E2E_RUN_ID: '{{.E2E_RUN_ID}}'
   COMPOSE_PROJECT_NAME: 'knowledge-e2e-{{.E2E_RUN_ID}}'
 
 tasks:
+  manual:up:
+    desc: 手動検証環境を起動する（既存データを保持、ブラウザはmanual:open）
+    env:
+      E2E_RUN_ID: manual
+    cmds:
+      - '{{.MANUAL_COMPOSE}} build backend frontend proxy certificates oauth init'
+      # 手動環境は使い捨てではないため、再起動時に期限2日の証明書だけ更新する。
+      - "{{.MANUAL_COMPOSE}} run --rm --no-deps --entrypoint sh certificates -c 'rm -f /certs/* && sh /usr/local/bin/certificates.sh'"
+      - '{{.MANUAL_COMPOSE}} up --detach --wait --wait-timeout 120 postgres oauth backend frontend proxy'
+      - '{{.MANUAL_COMPOSE}} exec -T proxy nginx -s reload'
+      - '{{.MANUAL_COMPOSE}} run --rm --no-deps init'
+      - mkdir -p dev/frontend/e2e/.manual
+      - '{{.MANUAL_COMPOSE}} cp proxy:/certs/ca.crt dev/frontend/e2e/.manual/ca.crt'
+      - echo '起動しました。task manual:open で専用ブラウザを開けます。'
+
+  manual:open:
+    desc: 認証済みの専用Chromiumを開く（Markdown・HTMLのサンプルdraftを各1件追加）
+    preconditions:
+      - sh: test -f dev/frontend/e2e/.manual/ca.crt
+        msg: 先に task manual:up を実行してください。
+    cmds:
+      - task: e2e:install
+      - pnpm --dir dev/frontend exec playwright install chromium
+      - node dev/frontend/e2e/scripts/manual.ts
+
+  manual:check:
+    desc: 手動環境でTLS・認証fixture・正式保存・HTML表示を検証する
+    preconditions:
+      - sh: test -f dev/frontend/e2e/.manual/ca.crt
+        msg: 先に task manual:up を実行してください。
+    cmds:
+      - task: e2e:install
+      - pnpm --dir dev/frontend exec playwright install chromium
+      - node dev/frontend/e2e/scripts/manual.ts --check
+
+  manual:down:
+    desc: 手動検証環境を停止する（DBとファイルは保持する）
+    env:
+      E2E_RUN_ID: manual
+    cmds:
+      - '{{.MANUAL_COMPOSE}} --profile commands down --remove-orphans'
+
   e2e:install:
     desc: E2Eを含むフロントエンドの固定依存をインストールする
     cmds:
@@ -44,7 +87,7 @@ tasks:
       - '{{.COMPOSE}} up --no-deps --force-recreate --abort-on-container-exit --exit-code-from test test'
 
   e2e:env:seed:
-    desc: 業務migration・fixture投入の入口（対応Issueで実装するまで失敗する）
+    desc: 起動時のmigrationとテストごとのfixture投入方法を案内する
     cmds:
       - task: e2e:config
       - '{{.COMPOSE}} run --rm --no-deps init node init/business-seed.mjs'
