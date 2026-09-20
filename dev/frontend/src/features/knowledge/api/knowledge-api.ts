@@ -1,8 +1,14 @@
 import { httpClient } from "@/lib/http/client";
 import type {
   CommitResult,
+  DraftCreated,
   DraftDetail,
   EditableKnowledge,
+  Folder,
+  FolderInput,
+  KnowledgeList,
+  KnowledgeListItem,
+  KnowledgeListParams,
   KnowledgeDetail,
   KnowledgeSummary,
   SaveInput,
@@ -25,6 +31,32 @@ function isSummary(value: unknown): value is KnowledgeSummary & Record<string, u
     (value.format === "markdown" || value.format === "html") &&
     typeof value.updatedAt === "string" &&
     Number.isFinite(Date.parse(value.updatedAt))
+  );
+}
+
+function isFolder(value: unknown): value is Folder {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    uuid.test(value.id) &&
+    typeof value.name === "string" &&
+    (value.parentId === null ||
+      (typeof value.parentId === "string" && uuid.test(value.parentId))) &&
+    typeof value.version === "number" &&
+    Number.isSafeInteger(value.version) &&
+    value.version > 0
+  );
+}
+
+function isListSummary(value: unknown): value is KnowledgeListItem {
+  return (
+    isSummary(value) &&
+    Array.isArray(value.tags) &&
+    value.tags.every((tag: unknown) => typeof tag === "string") &&
+    (value.folder === null || isFolder(value.folder)) &&
+    typeof value.version === "number" &&
+    Number.isSafeInteger(value.version) &&
+    value.version > 0
   );
 }
 
@@ -85,6 +117,55 @@ export function parseRecent(value: unknown): KnowledgeSummary[] {
     .slice(0, 10);
 }
 
+export function parseList(value: unknown): KnowledgeList {
+  const items =
+    record(value) && Array.isArray(value.items) ? (value.items as unknown[]) : undefined;
+
+  if (
+    !record(value) ||
+    !items ||
+    typeof value.total !== "number" ||
+    !Number.isSafeInteger(value.total) ||
+    value.total < 0 ||
+    typeof value.page !== "number" ||
+    !Number.isSafeInteger(value.page) ||
+    value.page < 1 ||
+    typeof value.pageSize !== "number" ||
+    !Number.isSafeInteger(value.pageSize) ||
+    value.pageSize < 1 ||
+    typeof value.hasNext !== "boolean" ||
+    items.some((item) => !isListSummary(item))
+  )
+    throw new Error("不正な知識一覧応答です。");
+
+  return {
+    items: items.filter(isListSummary),
+    total: value.total,
+    page: value.page,
+    pageSize: value.pageSize,
+    hasNext: value.hasNext,
+  };
+}
+
+export function parseFolders(value: unknown): Folder[] {
+  const items =
+    record(value) && Array.isArray(value.items) ? (value.items as unknown[]) : undefined;
+
+  if (!items || items.some((item) => !isFolder(item))) throw new Error("不正なフォルダ応答です。");
+  return items.filter(isFolder);
+}
+
+export function parseCreatedDraft(value: unknown): DraftCreated {
+  if (
+    !record(value) ||
+    typeof value.draftId !== "string" ||
+    !uuid.test(value.draftId) ||
+    value.editPath !== `/knowledge-drafts/${value.draftId}/edit`
+  )
+    throw new Error("不正な下書き作成応答です。");
+  return { draftId: value.draftId, editPath: value.editPath };
+}
+
 function parseCommit(value: unknown): CommitResult {
   if (!record(value) || typeof value.knowledgeId !== "string" || !uuid.test(value.knowledgeId))
     throw new Error("不正な保存応答です。");
@@ -106,6 +187,43 @@ function parseDraft(value: unknown, expectedId: string): DraftDetail {
 }
 
 export const knowledgeApi = {
+  upload: async (file: File, folderId?: string) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    if (folderId) form.append("folderId", folderId);
+    return parseCreatedDraft(await httpClient.post<unknown, FormData>("/knowledge-drafts", form));
+  },
+  list: async (params: KnowledgeListParams, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    if (params.query) query.set("query", params.query);
+    for (const tag of params.tags ?? []) query.append("tag", tag);
+    if (params.folderId) query.set("folderId", params.folderId);
+    query.set("page", String(params.page));
+    query.set("pageSize", String(params.pageSize));
+    return parseList(await httpClient.get<unknown>(`/knowledge?${query.toString()}`, { signal }));
+  },
+  folders: async (signal?: AbortSignal) =>
+    parseFolders(await httpClient.get<unknown>("/folders", { signal })),
+  createFolder: async (input: FolderInput) =>
+    parseFolder(await httpClient.post<unknown, FolderInput>("/folders", input)),
+  updateFolder: async (id: string, version: number, input: FolderInput) =>
+    parseFolder(
+      await httpClient.patch<unknown, FolderInput & { version: number }>(
+        `/folders/${encodeURIComponent(id)}`,
+        { ...input, version },
+      ),
+    ),
+  deleteFolder: async (id: string, version: number) => {
+    await httpClient.delete(`/folders/${encodeURIComponent(id)}?version=${version}`);
+  },
+  move: async (id: string, version: number, folderId: string | null) =>
+    parseDetail(
+      await httpClient.put<unknown, { version: number; folderId: string | null }>(
+        `/knowledge/${encodeURIComponent(id)}/folder`,
+        { version, folderId },
+      ),
+      id,
+    ),
   detail: async (id: string, signal?: AbortSignal) =>
     parseDetail(
       await httpClient.get<unknown>(`/knowledge/${encodeURIComponent(id)}`, { signal }),
@@ -149,3 +267,8 @@ export const knowledgeApi = {
     return value.url;
   },
 };
+
+function parseFolder(value: unknown): Folder {
+  if (!isFolder(value)) throw new Error("不正なフォルダ応答です。");
+  return value;
+}

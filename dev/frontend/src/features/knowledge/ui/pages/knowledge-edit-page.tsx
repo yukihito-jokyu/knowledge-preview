@@ -246,7 +246,7 @@ function Editor({
               return;
             }
             setSearchError("");
-            navigate({ to: "/knowledge", search: { q, page: 1, pageSize: 25 } }).catch(fail);
+            navigate({ to: "/knowledge", search: { q, page: 1, pageSize: 10 } }).catch(fail);
           }}
         >
           <Input
@@ -324,7 +324,7 @@ function Editor({
               <>
                 <Link
                   to="/knowledge"
-                  search={{ folderId: current.folder.id, page: 1, pageSize: 25 }}
+                  search={{ folderId: current.folder.id, page: 1, pageSize: 10 }}
                 >
                   {current.folder.name}
                 </Link>
@@ -431,7 +431,7 @@ function Editor({
             <div hidden={mode === "editor"} className="min-w-0 p-5">
               <div className="mb-5 flex flex-wrap gap-2">
                 {[...new Set(current.tags.map((tag) => tag.trim()).filter(Boolean))].map((tag) => (
-                  <Link key={tag} to="/knowledge" search={{ tag: [tag], page: 1, pageSize: 25 }}>
+                  <Link key={tag} to="/knowledge" search={{ tag: [tag], page: 1, pageSize: 10 }}>
                     <Badge variant="secondary"># {tag}</Badge>
                   </Link>
                 ))}
