@@ -35,42 +35,53 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
 		return nil
 	}
 
-	path, err := migrationPath()
+	paths, err := migrationPaths()
 	if err != nil {
 		return err
 	}
 
-	migration, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read migration: %w", err)
-	}
+	for _, path := range paths {
+		migration, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration: %w", err)
+		}
 
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
-		return fmt.Errorf("execute migration: %w", err)
+		if _, err := pool.Exec(ctx, string(migration)); err != nil {
+			return fmt.Errorf("execute migration %s: %w", filepath.Base(path), err)
+		}
 	}
 
 	return nil
 }
 
-func migrationPath() (string, error) {
+func migrationPaths() ([]string, error) {
+	names := []string{
+		"000001_knowledge.up.sql",
+		"000002_auth.up.sql",
+		"000003_knowledge_library.up.sql",
+	}
+	roots := []string{"/migrations", "migrations", "dev/backend/migrations"}
 	if configured := os.Getenv("E2E_MIGRATIONS_DIR"); configured != "" {
-		path := filepath.Join(configured, "000001_knowledge.up.sql")
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		roots = append([]string{configured}, roots...)
+	}
+
+	for _, root := range roots {
+		paths := make([]string, 0, len(names))
+		available := true
+		for _, name := range names {
+			path := filepath.Join(root, name)
+			if _, err := os.Stat(path); err != nil {
+				available = false
+				break
+			}
+			paths = append(paths, path)
+		}
+		if available {
+			return paths, nil
 		}
 	}
 
-	for _, path := range []string{
-		"/migrations/000001_knowledge.up.sql",
-		"migrations/000001_knowledge.up.sql",
-		"dev/backend/migrations/000001_knowledge.up.sql",
-	} {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("knowledge migration file is not available")
+	return nil, fmt.Errorf("knowledge migrations are not available")
 }
 
 func ensureBucket(ctx context.Context, cfg config.Knowledge) error {

@@ -4,7 +4,9 @@ import { expect, test } from "../fixtures/test";
 test("未ログインでも、HTTPSでログイン画面を表示できる", async ({ page }) => {
   const response = await page.goto("/login");
   expect(response?.status()).toBe(200);
-  await expect(page.getByRole("heading", { name: "ログイン", exact: true })).toBeVisible();
+
+  const loginHeading = page.getByRole("heading", { name: "ログイン", exact: true });
+  await expect(loginHeading).toBeVisible();
   await expect(page.getByRole("button", { name: "GitHubでログイン", exact: true })).toBeVisible();
 });
 

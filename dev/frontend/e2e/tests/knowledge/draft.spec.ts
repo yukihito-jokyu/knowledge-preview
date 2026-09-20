@@ -38,6 +38,6 @@ test("draftを正式保存すると保存済み画面へ遷移し、再読込後
   await page.reload({ waitUntil: "domcontentloaded" });
   const editorUrl = new URL(page.url());
   editorUrl.searchParams.set("mode", "editor");
-  await page.goto(editorUrl.toString(), { waitUntil: "domcontentloaded" });
+  await page.goto(editorUrl.toString(), { waitUntil: "commit" });
   await expect(page.locator("#knowledge-source")).toHaveValue(updated);
 });

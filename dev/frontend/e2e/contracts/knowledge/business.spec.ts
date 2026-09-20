@@ -136,6 +136,29 @@ test("10年前のdraftを正式保存すると、再送は同じIDになり別�
   });
 });
 
+// Issue #15 X03：2タブの初回正式保存が同じdraftを二重作成せず、応答消失後の再送も収束する。
+test("同じdraftを同時に正式保存しても、同じknowledgeIdへ収束する", async ({ request }) => {
+  const draftId = await createDraft(request);
+
+  const [first, second] = await Promise.all([
+    commitDraft(request, draftId),
+    commitDraft(request, draftId),
+  ]);
+
+  const statuses = [first.status(), second.status()].sort((left, right) => left - right);
+  expect(statuses).toEqual([200, 201]);
+
+  const firstBody = (await first.json()) as { knowledgeId?: unknown };
+  const secondBody = (await second.json()) as { knowledgeId?: unknown };
+  expect(typeof firstBody.knowledgeId).toBe("string");
+  expect(secondBody.knowledgeId).toBe(firstBody.knowledgeId);
+
+  // 最初の応答を利用できなかったクライアントが同じ入力を再送する経路を確認する。
+  const retry = await commitDraft(request, draftId);
+  expect(retry.status()).toBe(200);
+  await expect(retry.json()).resolves.toMatchObject({ knowledgeId: firstBody.knowledgeId });
+});
+
 // Issue #14 シナリオ3：同じ版を保存すると、先行更新だけが永続化される。
 test("同じversionを2回保存すると、後続の入力は409になり先行本文だけが残る", async ({ request }) => {
   const draftId = await createDraft(request);

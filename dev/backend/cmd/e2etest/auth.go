@@ -79,7 +79,7 @@ func (a *actors) logValues() map[string]map[string]string {
 }
 
 func registerAuth(router *gin.Engine, actors *actors, appOrigin string) {
-	router.GET("/api/v1/auth/me", func(c *gin.Context) {
+	router.GET("/api/v1/auth/session", func(c *gin.Context) {
 		if !sameHost(c, appOrigin) {
 			response.WriteError(c, domain.ErrNotFound)
 			return
