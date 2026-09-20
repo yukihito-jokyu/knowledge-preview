@@ -40,25 +40,31 @@ task e2e:env:down   # 当該実行のコンテナ・DB・証明書・成果物vo
 
 CIは実行ごとに一意なE2E_RUN_IDを設定し、一括コマンドを使う。強制停止に備え、CI側にも常時実行のdownを置く。横断CIのworkflow自体は未実装。
 
-成果物は固定の`dev/frontend/e2e/artifacts/`へDockerのコピー機能で回収する。回収前に前回分を削除し、最新の`report/`・`results/`だけを残す。実行ID別のフォルダは作らない。同じチェックアウトで複数実行した場合は最後に回収した結果で置き換わるため、成果物回収を同時に実行しない。ホストのディレクトリをコンテナにmountしない。回収済みファイルはdownで削除しない。CIの保持期間は7日。認証Cookie・code・トークンなどの秘密値をログや成果物へ出力しない。
+成果物は固定の`dev/frontend/e2e/artifacts/`へDockerのコピー機能で回収する。回収前に前回分を削除し、最新の`report/`・`results/`だけを残す。実行ID別のフォルダは作らない。同じチェックアウトで複数実行した場合は最後に回収した結果で置き換わるため、成果物回収を同時に実行しない。複数ブラウザを別実行IDで走らせる場合は、各実行の`blob/`を集約して`playwright merge-reports`で最終`report/`を生成する。ホストのディレクトリをコンテナにmountしない。回収済みファイルはdownで削除しない。CIの保持期間は7日。認証Cookie・code・トークンなどの秘密値をログや成果物へ出力しない。
 
 ## 現在の検証範囲
 
 環境疎通テストはChromium・Firefox・WebKitでログイン画面の表示と、実DBへPingする`/api/ready`の204を確認する。実行専用CAを信頼させ、TLS検証は有効のままにする。
 OAuth代替は雛形のため、業務要求へ501を返すことも確認する。知識のHTML配信は実APIへ接続する。テスト用認証を実OAuthログイン成功として扱わない。
 
+## 知識シナリオの実装範囲
+
+`contracts/knowledge/upload.spec.ts` は実multipartのMarkdown/HTML、owner境界、入力違反、10 MiB境界をAPI契約として検証する。`tests/knowledge/upload.spec.ts` はfixture認証でupload画面からdraft編集・正式保存・一覧・再読込、HTML隔離preview、失敗後の再選択を確認する。`tests/knowledge/list-and-folders.spec.ts` は26件pagination・URL検索・親子folderの移動・rename・delete・keyboard focusを確認し、`contracts/knowledge/folders.spec.ts` はcycle・version競合・非空削除・所有者境界を重複なく確認する。
+
+認証は `authenticateTestSession` のテスト専用Cookieだけを使う。これらの成功は実OAuthの成功を意味しない。
+
 ## 未実装部分と実装時の参照先
 
-| 入口                                    | 現在の状態                                                                    |
-| --------------------------------------- | ----------------------------------------------------------------------------- |
-| `fixtures/knowledge/prepare.ts`         | テスト専用fixture APIで実DB/MinIOにdraftを作成する                            |
-| `fixtures/auth/authenticate.ts`         | 実OAuth callback経由でログインする雛形。未実装エラー                          |
-| `environment/init/business-seed.mjs`    | 起動時にmigration/bucketを準備し、各テストがfixture APIで投入する旨を案内する |
-| `environment/oauth/server.mjs`          | `/health`のみ応答。認可・code交換・PKCE・ユーザー取得は501                    |
-| `environment/proxy/proxy.conf`のpreview | 別ホストから実Go APIのHTML配信へ接続する                                      |
+| 入口                                    | 現在の状態                                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `fixtures/knowledge/prepare.ts`         | テスト専用fixture APIで実DB/MinIOにdraftを作成する。upload specだけは実multipart入口を使う            |
+| `fixtures/auth/authenticate.ts`         | 実OAuth callback経由でログインする雛形。未実装エラー。knowledge specはテスト専用Cookieを使う          |
+| `environment/init/business-seed.mjs`    | 起動時にmigration/bucketを準備し、各テストがfixture APIまたは実multipart uploadで投入する旨を案内する |
+| `environment/oauth/server.mjs`          | `/health`のみ応答。認可・code交換・PKCE・ユーザー取得は501                                            |
+| `environment/proxy/proxy.conf`のpreview | 別ホストから実Go APIのHTML配信へ接続する                                                              |
 
 配置と増やし方は[ディレクトリ設計](../../../docs/testing.md#e2eのディレクトリ設計)、テストの具体化は[横断シナリオ規約](../../../docs/testing.md#必須の横断シナリオ)を参照する。
-作成は[e2e-implement](../../../.agents/skills/e2e-implement/SKILL.md)、レビューは[e2e-review](../../../.agents/skills/e2e-review/SKILL.md)の手順を利用する。
+作成は[e2e-implement](../../../.agents/skills/e2e-implement/SKILL.md)、レビューは[e2e-review](../../../.agents/skills/e2e-review/SKILL.md)の手順を利用する。既存の`business.spec.ts`と`html-preview.spec.ts`が正式保存後のHTML安全化・古いdraft・更新競合を検証するため、新規specでは同じ経路を複製しない。
 
 ## 補助コマンド
 

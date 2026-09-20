@@ -73,9 +73,12 @@ func main() {
 	}
 
 	actors := newActors()
+	faults := newFaultController()
 	readiness := usecase.NewReadinessUseCase(pool)
 	router := httpinterface.NewRouter(readiness, logger)
-	knowledge := usecase.NewKnowledgeUseCase(postgres.NewKnowledgeRepository(pool), objects, htmlsafe.New(), actors)
+	repository := &faultRepository{KnowledgeRepository: postgres.NewKnowledgeRepository(pool), faults: faults}
+	objectStore := &faultObjects{KnowledgeObjects: objects, faults: faults}
+	knowledge := usecase.NewKnowledgeUseCase(repository, objectStore, htmlsafe.New(), actors)
 	httpinterface.RegisterKnowledge(
 		router,
 		knowledge,
@@ -85,6 +88,7 @@ func main() {
 	)
 	registerAuth(router, actors, knowledgeConfig.AppOrigin)
 	registerFixtures(router, pool, objects, actors, knowledgeConfig.AppOrigin)
+	registerTestControls(router, pool, actors, knowledgeConfig.AppOrigin, faults)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

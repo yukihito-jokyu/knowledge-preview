@@ -1,8 +1,8 @@
 # バックエンドのアーキテクチャ
 
 この文書は、Goバックエンドの各パッケージの責務と、実装を追加する場所を定める。
-GinによるHTTP API、pgxによるPostgreSQL接続、ヘルスチェックと知識の保存・隔離配信を実装している。
-知識APIの認証は #19 の接続待ちで、標準起動では管理APIを401で拒否する。契約・共有schema・設定・検証は [KNOWLEDGE.md](KNOWLEDGE.md) を参照する。
+GinによるHTTP API、pgxによるPostgreSQL接続、ヘルスチェック、OAuth認証、知識の保存・隔離配信を実装している。
+認証の契約・共有schema・設定・検証は [KNOWLEDGE.md](KNOWLEDGE.md) を参照する。
 開発コマンドは [Taskfile.yml](Taskfile.yml)、Lint・整形の設定は [.golangci.yml](.golangci.yml)、
 golangci-lintの指定バージョンは [.golangci-lint-version](.golangci-lint-version) を参照する。
 
@@ -21,7 +21,8 @@ HTTPの受付、アプリケーションの処理、外部技術へのアクセ�
 | `internal/interface/http` | ルーティング、リクエストの受付、middleware | [router.go](internal/interface/http/router.go)、[health.go](internal/interface/http/health.go) |
 | `internal/interface/response` | レスポンスの型、エラーからHTTP応答への変換と出力 | [error.go](internal/interface/response/error.go) |
 | `internal/infrastructure/postgres` | PostgreSQL接続など、pgxを使う実装 | [pool.go](internal/infrastructure/postgres/pool.go) |
-| `migrations` | DBスキーマ変更のSQLを置く場所 | [知識schema](migrations/000001_knowledge.up.sql)。適用はgolang-migrateで実施 |
+| `internal/infrastructure/github` | GitHub OAuthの認可コード交換とユーザー取得 | [oauth.go](internal/infrastructure/github/oauth.go) |
+| `migrations` | DBスキーマ変更のSQLを置く場所 | [知識schema](migrations/000001_knowledge.up.sql)、[知識一覧・folder拡張](migrations/000003_knowledge_library.up.sql)。適用はgolang-migrateで実施 |
 
 ## ファイルとディレクトリの分け方
 
@@ -74,8 +75,8 @@ router := httpinterface.NewRouter(readiness, logger)
 | `GET /health` | プロセスの応答を確認。DBへアクセスしない | 204 | 専用の失敗分岐なし |
 | `GET /ready` | 2秒の期限でUse caseからDBの `Ping` を呼ぶ | 204 | 共通エラーレスポンス。通常の接続エラーは500 |
 
-ルーターは `gin.New()` で作成し、リクエストログと `gin.Recovery()` を登録する。
-信頼するプロキシは現在 `nil` に設定している。
+ルーターは `gin.New()` で作成し、リクエストログ、`gin.Recovery()`、認証のprocess-wide rate limitを登録する。
+Ginは転送ヘッダーを信用しない。認証の利用者別制限は境界プロキシで実施し、境界プロキシは`X-Forwarded-For`と`X-Real-IP`を接続元IPで上書きして、OAuthのstart/callbackを同じIP単位で10回/分に制限する。proxyを経由しない直結経路には、同じstart/callbackを共有するcapacity 600・補充600回/分のprocess-wide bucketを安全網として適用する。後者は複数利用者で共有する上限であり、利用者別10回/分の代替ではない。
 [middleware.go](internal/interface/http/middleware.go) は `X-Request-ID` を引き継ぎ、未指定なら生成する。
 リクエストIDは応答ヘッダーと、メソッド・パス・ステータス・処理時間を含む構造化ログに記録する。
 
@@ -114,7 +115,7 @@ router := httpinterface.NewRouter(readiness, logger)
 
 ## 知識の追加配置
 
-`domain/knowledge.go` と `domain/markdown.go` が型・本文検証、`usecase/knowledge.go` が処理と外部interface、`interface/http/knowledge.go` が受付、`interface/response/knowledge.go` が所有者DTO、`infrastructure/postgres/knowledge.go` がSQL transactionを担う。独立した外部技術として `infrastructure/htmlsafe` がHTML安全化、`infrastructure/s3` がMinIO/S3を扱う。`cmd/collect-knowledge` は未参照object回収CLIである。Use caseへGin/pgx/S3具体型は渡さない。
+`domain/knowledge.go`・`domain/library.go`・`domain/markdown.go` が型・本文・検索条件検証、`usecase/knowledge.go` がupload/list/folder処理と外部interface、`interface/http/knowledge.go` が受付、`interface/response/knowledge.go` が所有者DTO、`infrastructure/postgres/knowledge.go` がSQL transactionを担う。独立した外部技術として `infrastructure/htmlsafe` がHTML安全化、`infrastructure/s3` がMinIO/S3を扱う。`cmd/collect-knowledge` は未参照object回収CLIである。Use caseへGin/pgx/S3具体型は渡さない。
 
 ## Goコードの改行
 

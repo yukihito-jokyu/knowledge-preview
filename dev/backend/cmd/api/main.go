@@ -10,7 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/config"
+	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/domain"
+	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/github"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/htmlsafe"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/postgres"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/s3"
@@ -27,6 +30,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := cfg.Auth.Validate(cfg.Environment); err != nil {
+		logger.Error("authentication configuration is invalid", "error", err)
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -39,6 +47,36 @@ func main() {
 
 	readiness := usecase.NewReadinessUseCase(pool)
 	router := httpinterface.NewRouter(readiness, logger)
+	auth := usecase.NewAuthUseCase(
+		postgres.NewAuthRepository(pool),
+		github.New(
+			cfg.Auth.ClientID,
+			cfg.Auth.ClientSecret,
+			cfg.Auth.RedirectURL,
+			cfg.Auth.AuthorizeURL,
+			cfg.Auth.TokenURL,
+			cfg.Auth.UserURL,
+		),
+		usecase.AuthSettings{
+			AllowedGitHubIDs: cfg.Auth.AllowedGitHubIDs,
+			SigningKey:       cfg.Auth.SigningKey,
+			Issuer:           cfg.Auth.Issuer,
+			Audience:         cfg.Auth.Audience,
+			AccessTTL:        cfg.Auth.AccessTTL,
+			RefreshTTL:       cfg.Auth.RefreshTTL,
+			StateTTL:         cfg.Auth.StateTTL,
+		},
+	)
+	httpinterface.RegisterAuth(router, auth, cfg.Auth.AppOrigin)
+
+	authenticate := func(c *gin.Context) (domain.Principal, error) {
+		value, err := c.Cookie("__Host-kp_access")
+		if err != nil {
+			return domain.Principal{}, domain.ErrUnauthenticated
+		}
+
+		return auth.Authenticate(c.Request.Context(), value)
+	}
 
 	knowledgeConfig, err := config.LoadKnowledge()
 	if err != nil {
@@ -65,10 +103,15 @@ func main() {
 		postgres.NewKnowledgeRepository(pool),
 		objects,
 		htmlsafe.New(),
-		usecase.DenySessions{},
+		auth,
 	)
-	// #19で認証の検証とプライマリDBによるセッション確認の両方を接続する。
-	httpinterface.RegisterKnowledge(router, knowledge, nil, knowledgeConfig.AppOrigin, knowledgeConfig.PreviewOrigin)
+	httpinterface.RegisterKnowledge(
+		router,
+		knowledge,
+		authenticate,
+		knowledgeConfig.AppOrigin,
+		knowledgeConfig.PreviewOrigin,
+	)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

@@ -41,7 +41,7 @@ test("同じ版を二つの編集タブから保存すると、後続タブは40
     await expect(secondPage.locator("#knowledge-source")).toHaveValue(validSource, {
       timeout: 15_000,
     });
-    // 利用者と同じく、操作するタブを前面に切り替えてから入力・保存する。
+    // 二つのタブを同じ版から編集し、操作するタブを前面化して保存競合を検証する。
     await page.bringToFront();
     const firstSource = `${validSource}\n\n先行タブの保存。`;
     await page.locator("#knowledge-source").fill(firstSource);
@@ -56,9 +56,8 @@ test("同じ版を二つの編集タブから保存すると、後続タブは40
     ]);
 
     expect(firstSave.status()).toBe(200);
-
-    await secondPage.bringToFront();
     const secondSource = `${validSource}\n\n後続タブの入力を維持。`;
+    await secondPage.bringToFront();
     await secondPage.locator("#knowledge-source").fill(secondSource);
 
     const [secondSave] = await Promise.all([

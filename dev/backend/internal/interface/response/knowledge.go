@@ -57,11 +57,39 @@ func Detail(k domain.Knowledge, source, appOrigin string, warning bool) Knowledg
 }
 
 type KnowledgeSummary struct {
+	ID        string         `json:"id"`
+	Title     string         `json:"title"`
+	Format    string         `json:"format"`
+	Tags      []string       `json:"tags"`
+	Folder    *domain.Folder `json:"folder"`
+	Version   int64          `json:"version"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+}
+
+type RecentSummary struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Format    string    `json:"format"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+type KnowledgeList struct {
+	Items    []KnowledgeSummary `json:"items"`
+	Total    int                `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"pageSize"`
+	HasNext  bool               `json:"hasNext"`
+}
+
+type DraftCreated struct {
+	DraftID  string `json:"draftId"`
+	EditPath string `json:"editPath"`
+}
+
+func CreatedDraft(id string) DraftCreated {
+	return DraftCreated{DraftID: id, EditPath: "/knowledge-drafts/" + id + "/edit"}
+}
+
 type CommitResult struct {
 	KnowledgeID string `json:"knowledgeId"`
 	EditPath    string `json:"editPath"`

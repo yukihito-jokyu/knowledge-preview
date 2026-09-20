@@ -17,7 +17,12 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   outputDir: `${artifactDir}/results`,
-  reporter: [["list"], ["html", { outputFolder: `${artifactDir}/report`, open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: `${artifactDir}/report`, open: "never" }],
+    ["json", { outputFile: `${artifactDir}/results/playwright.json` }],
+    ["blob", { outputDir: `${artifactDir}/blob` }],
+  ],
   use: {
     baseURL,
     ignoreHTTPSErrors: false,
@@ -27,7 +32,13 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
-    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
   ],
 });

@@ -18,6 +18,6 @@ export const Route = createFileRoute("/_authenticated/knowledge/")({
     pageSize:
       typeof search.pageSize === "number" && [10, 25, 50, 100].includes(search.pageSize)
         ? search.pageSize
-        : 25,
+        : 10,
   }),
 });

@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/domain"
 )
@@ -19,7 +22,9 @@ type Sessions interface {
 type KnowledgeRepository interface {
 	Get(context.Context, string, string) (domain.Knowledge, error)
 	Recent(context.Context, string) ([]domain.Knowledge, error)
+	List(context.Context, string, domain.ListQuery) (domain.KnowledgePage, error)
 	Draft(context.Context, string, string) (domain.Draft, error)
+	CreateDraft(context.Context, domain.Draft) error
 	StageObjects(context.Context, []string, func() error) error
 	Save(context.Context, domain.Knowledge, int64) (domain.Knowledge, error)
 	Commit(context.Context, domain.Draft, domain.Knowledge, string) (string, bool, error)
@@ -27,6 +32,15 @@ type KnowledgeRepository interface {
 	Grant(context.Context, domain.PreviewGrant) error
 	Preview(context.Context, string) (domain.PreviewGrant, error)
 	Public(context.Context, string, int64) (domain.Knowledge, error)
+	Folders(context.Context, string) ([]domain.Folder, error)
+	CreateFolder(context.Context, string, string, *string) (domain.Folder, error)
+	UpdateFolder(context.Context, string, string, string, *string, bool, int64) (domain.Folder, error)
+	DeleteFolder(context.Context, string, string, int64) error
+	MoveKnowledge(context.Context, string, string, *string, int64) (domain.Knowledge, error)
+}
+type SearchTextRepairRepository interface {
+	SearchTextBackfill(context.Context, string) ([]domain.Knowledge, error)
+	SetSearchText(context.Context, string, string, string) error
 }
 type KnowledgeObjects interface {
 	Put(context.Context, string, string) error
@@ -42,6 +56,8 @@ type KnowledgeUseCase struct {
 	sessions  Sessions
 }
 
+const searchTextBackfillBatchSize = 100
+
 func NewKnowledgeUseCase(
 	repo KnowledgeRepository,
 	objects KnowledgeObjects,
@@ -51,7 +67,7 @@ func NewKnowledgeUseCase(
 	return &KnowledgeUseCase{repo: repo, objects: objects, sanitizer: sanitizer, sessions: sessions}
 }
 
-// DenySessions は#19で認証済みセッションの保存先を接続するまで、セッションを拒否する。
+// DenySessions は認証を接続しない実行環境やテストでセッションを拒否する。
 type DenySessions struct{}
 
 func (DenySessions) Active(context.Context, domain.Principal) (bool, error) { return false, nil }
@@ -95,6 +111,245 @@ func (u *KnowledgeUseCase) Recent(ctx context.Context, p domain.Principal) ([]do
 	return u.repo.Recent(ctx, p.OwnerID)
 }
 
+func (u *KnowledgeUseCase) List(
+	ctx context.Context,
+	p domain.Principal,
+	query domain.ListQuery,
+) (domain.KnowledgePage, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return domain.KnowledgePage{}, err
+	}
+
+	query, err := domain.NormalizeListQuery(query)
+	if err != nil {
+		return domain.KnowledgePage{}, err
+	}
+
+	// ponytail: one backfill batch per search request; use a dedicated migration worker if volume grows.
+	if query.Query != "" {
+		if err := u.repairSearchText(ctx, p.OwnerID); err != nil {
+			return domain.KnowledgePage{}, err
+		}
+	}
+
+	return u.repo.List(ctx, p.OwnerID, query)
+}
+
+func (u *KnowledgeUseCase) repairSearchText(ctx context.Context, owner string) error {
+	repair, ok := u.repo.(SearchTextRepairRepository)
+	if !ok {
+		return nil
+	}
+
+	items, err := repair.SearchTextBackfill(ctx, owner)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		source, err := u.objects.Get(ctx, item.SourceKey)
+		if err != nil {
+			return err
+		}
+
+		if err := repair.SetSearchText(ctx, owner, item.ID, searchText(item.Title, item.Tags, source)); err != nil {
+			return err
+		}
+	}
+
+	if len(items) == searchTextBackfillBatchSize {
+		remaining, err := repair.SearchTextBackfill(ctx, owner)
+		if err != nil {
+			return err
+		}
+
+		if len(remaining) > 0 {
+			return domain.ErrUnavailable
+		}
+	}
+
+	return nil
+}
+
+func searchText(title string, tags []string, source string) string {
+	return strings.Join([]string{title, strings.Join(tags, " "), source}, " ")
+}
+
+func (u *KnowledgeUseCase) Upload(
+	ctx context.Context,
+	p domain.Principal,
+	filename, source string,
+	folderID *string,
+) (domain.Draft, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return domain.Draft{}, err
+	}
+
+	if u.repo == nil || u.objects == nil || (folderID != nil && !domain.ValidID(*folderID)) {
+		return domain.Draft{}, domain.ErrBadRequest
+	}
+
+	if filename == "" || !utf8.ValidString(filename) || filepath.Base(filename) != filename ||
+		strings.ContainsAny(filename, `/\\`) {
+		return domain.Draft{}, domain.ErrBadRequest
+	}
+
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	format := map[string]string{".md": "markdown", ".html": "html"}[ext]
+	if format == "" {
+		return domain.Draft{}, &domain.ValidationError{
+			Detail: domain.FieldError{Field: "file", Reason: "unsupported_format"},
+		}
+	}
+
+	title := strings.TrimSpace(strings.TrimSuffix(filename, filepath.Ext(filename)))
+	if utf8.RuneCountInString(title) < 1 || utf8.RuneCountInString(title) > 200 {
+		return domain.Draft{}, &domain.ValidationError{
+			Detail: domain.FieldError{Field: "file", Reason: "invalid_title"},
+		}
+	}
+
+	k := domain.Knowledge{
+		OwnerID:        p.OwnerID,
+		Title:          title,
+		Format:         format,
+		Tags:           []string{},
+		LearningStatus: "unlearned",
+		Version:        1,
+		Folder:         folderFromID(folderID),
+	}
+
+	k, _, err := domain.ApplySource(k, source)
+	if err != nil {
+		return domain.Draft{}, err
+	}
+
+	if format == "html" {
+		if u.sanitizer == nil {
+			return domain.Draft{}, domain.ErrUnavailable
+		}
+
+		if _, _, err := u.sanitizer.Sanitize(source); err != nil {
+			return domain.Draft{}, err
+		}
+	}
+
+	draftID := newID()
+
+	key := "knowledge/" + randomToken()
+	if err := u.repo.StageObjects(ctx, []string{key}, func() error {
+		return u.objects.Put(ctx, key, source)
+	}); err != nil {
+		return domain.Draft{}, err
+	}
+
+	draft := domain.Draft{Knowledge: k, DraftID: draftID}
+
+	draft.SourceKey = key
+	if err := u.repo.CreateDraft(ctx, draft); err != nil {
+		return domain.Draft{}, err
+	}
+
+	return draft, nil
+}
+
+func folderFromID(id *string) *domain.Folder {
+	if id == nil {
+		return nil
+	}
+
+	return &domain.Folder{ID: *id}
+}
+
+func (u *KnowledgeUseCase) Folders(ctx context.Context, p domain.Principal) ([]domain.Folder, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return nil, err
+	}
+
+	return u.repo.Folders(ctx, p.OwnerID)
+}
+
+func (u *KnowledgeUseCase) CreateFolder(
+	ctx context.Context,
+	p domain.Principal,
+	name string,
+	parentID *string,
+) (domain.Folder, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return domain.Folder{}, err
+	}
+
+	name, err := domain.ValidateFolderName(name)
+	if err != nil {
+		return domain.Folder{}, err
+	}
+
+	if parentID != nil && !domain.ValidID(*parentID) {
+		return domain.Folder{}, domain.ErrBadRequest
+	}
+
+	return u.repo.CreateFolder(ctx, p.OwnerID, name, parentID)
+}
+
+func (u *KnowledgeUseCase) UpdateFolder(
+	ctx context.Context,
+	p domain.Principal,
+	id, name string,
+	parentID *string,
+	parentSpecified bool,
+	version int64,
+) (domain.Folder, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return domain.Folder{}, err
+	}
+
+	if !domain.ValidID(id) || version < 1 || version > domain.MaxVersion {
+		return domain.Folder{}, domain.ErrBadRequest
+	}
+
+	name, err := domain.ValidateFolderName(name)
+	if err != nil {
+		return domain.Folder{}, err
+	}
+
+	if parentSpecified && parentID != nil && !domain.ValidID(*parentID) {
+		return domain.Folder{}, domain.ErrBadRequest
+	}
+
+	return u.repo.UpdateFolder(ctx, p.OwnerID, id, name, parentID, parentSpecified, version)
+}
+
+func (u *KnowledgeUseCase) DeleteFolder(ctx context.Context, p domain.Principal, id string, version int64) error {
+	if err := u.authorize(ctx, p); err != nil {
+		return err
+	}
+
+	if !domain.ValidID(id) || version < 1 || version > domain.MaxVersion {
+		return domain.ErrBadRequest
+	}
+
+	return u.repo.DeleteFolder(ctx, p.OwnerID, id, version)
+}
+
+func (u *KnowledgeUseCase) MoveKnowledge(
+	ctx context.Context,
+	p domain.Principal,
+	id string,
+	folderID *string,
+	version int64,
+) (domain.Knowledge, error) {
+	if err := u.authorize(ctx, p); err != nil {
+		return domain.Knowledge{}, err
+	}
+
+	if !domain.ValidID(id) || version < 1 || version > domain.MaxVersion {
+		return domain.Knowledge{}, domain.ErrBadRequest
+	}
+
+	return u.repo.MoveKnowledge(ctx, p.OwnerID, id, folderID, version)
+}
+
 func (u *KnowledgeUseCase) Draft(ctx context.Context, p domain.Principal, id string) (domain.Draft, string, error) {
 	if err := u.authorize(ctx, p); err != nil {
 		return domain.Draft{}, "", err
@@ -132,6 +387,7 @@ func (u *KnowledgeUseCase) prepare(
 	}
 
 	k.HTMLSanitized = warning
+	k.SearchText = searchText(k.Title, k.Tags, source)
 	k.SourceKey = "knowledge/" + randomToken()
 	keys := []string{k.SourceKey}
 
