@@ -60,6 +60,7 @@ func migrationPaths() ([]string, error) {
 		"000002_auth.up.sql",
 		"000003_knowledge_library.up.sql",
 	}
+
 	roots := []string{"/migrations", "migrations", "dev/backend/migrations"}
 	if configured := os.Getenv("E2E_MIGRATIONS_DIR"); configured != "" {
 		roots = append([]string{configured}, roots...)
@@ -68,14 +69,17 @@ func migrationPaths() ([]string, error) {
 	for _, root := range roots {
 		paths := make([]string, 0, len(names))
 		available := true
+
 		for _, name := range names {
 			path := filepath.Join(root, name)
 			if _, err := os.Stat(path); err != nil {
 				available = false
 				break
 			}
+
 			paths = append(paths, path)
 		}
+
 		if available {
 			return paths, nil
 		}

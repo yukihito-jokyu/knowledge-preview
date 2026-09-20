@@ -29,16 +29,20 @@ func newFaultController() *faultController {
 func (f *faultController) set(kind string, count int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	f.remaining[kind] = count
 }
 
 func (f *faultController) consume(kind string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	if f.remaining[kind] < 1 {
 		return false
 	}
+
 	f.remaining[kind]--
+
 	return true
 }
 
@@ -51,6 +55,7 @@ func (r *faultRepository) CreateDraft(ctx context.Context, draft domain.Draft) e
 	if r.faults.consume(faultDatabase) {
 		return domain.ErrUnavailable
 	}
+
 	return r.KnowledgeRepository.CreateDraft(ctx, draft)
 }
 
@@ -63,6 +68,7 @@ func (o *faultObjects) Put(ctx context.Context, key, source string) error {
 	if o.faults.consume(faultObject) {
 		return domain.ErrUnavailable
 	}
+
 	return o.KnowledgeObjects.Put(ctx, key, source)
 }
 
@@ -90,7 +96,9 @@ func registerTestControls(
 		}
 
 		var request faultRequest
-		if !decodeFixture(c, &request) || (request.Kind != faultDatabase && request.Kind != faultObject) || request.Count < 1 || request.Count > 10 {
+		if !decodeFixture(c, &request) || (request.Kind != faultDatabase && request.Kind != faultObject) ||
+			request.Count < 1 ||
+			request.Count > 10 {
 			response.WriteError(c, domain.ErrBadRequest)
 			return
 		}
