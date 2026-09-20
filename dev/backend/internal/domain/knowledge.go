@@ -33,10 +33,6 @@ type ValidationError struct{ Detail FieldError }
 func (e *ValidationError) Error() string { return "domain validation failed" }
 func (e *ValidationError) Unwrap() error { return ErrValidation }
 
-type Folder struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
 type Knowledge struct {
 	ID             string
 	OwnerID        string
@@ -52,6 +48,7 @@ type Knowledge struct {
 	SourceKey      string
 	HTMLKey        string
 	HTMLSanitized  bool
+	SearchText     string
 }
 type Draft struct {
 	Knowledge

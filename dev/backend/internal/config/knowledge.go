@@ -7,7 +7,7 @@ import (
 )
 
 // Knowledgeの保存機能は、すべての設定が揃うまで無効にする。
-// 認証は#19で別途接続する。この設定で仮の認証情報を有効にすることはない。
+// 認証はcmd/apiで接続し、この設定で仮の認証情報を有効にすることはない。
 type Knowledge struct {
 	AppOrigin     string
 	PreviewOrigin string

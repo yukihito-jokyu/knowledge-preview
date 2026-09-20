@@ -10,17 +10,22 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/domain"
+	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/infrastructure/htmlsafe"
 )
 
 // 未指定の依存呼び出しは失敗させ、拒否後の保存や読み出しを検出する。
 type knowledgeRepositoryStub struct {
 	KnowledgeRepository
-	get     func(context.Context, string, string) (domain.Knowledge, error)
-	draft   func(context.Context, string, string) (domain.Draft, error)
-	stage   func(context.Context, []string, func() error) error
-	save    func(context.Context, domain.Knowledge, int64) (domain.Knowledge, error)
-	grant   func(context.Context, domain.PreviewGrant) error
-	preview func(context.Context, string) (domain.PreviewGrant, error)
+	get           func(context.Context, string, string) (domain.Knowledge, error)
+	draft         func(context.Context, string, string) (domain.Draft, error)
+	list          func(context.Context, string, domain.ListQuery) (domain.KnowledgePage, error)
+	stage         func(context.Context, []string, func() error) error
+	create        func(context.Context, domain.Draft) error
+	save          func(context.Context, domain.Knowledge, int64) (domain.Knowledge, error)
+	grant         func(context.Context, domain.PreviewGrant) error
+	preview       func(context.Context, string) (domain.PreviewGrant, error)
+	backfill      func(context.Context, string) ([]domain.Knowledge, error)
+	setSearchText func(context.Context, string, string, string) error
 }
 
 func (r knowledgeRepositoryStub) Get(c context.Context, owner, id string) (domain.Knowledge, error) {
@@ -31,8 +36,28 @@ func (r knowledgeRepositoryStub) Draft(c context.Context, owner, id string) (dom
 	return r.draft(c, owner, id)
 }
 
+func (r knowledgeRepositoryStub) List(
+	c context.Context,
+	owner string,
+	query domain.ListQuery,
+) (domain.KnowledgePage, error) {
+	return r.list(c, owner, query)
+}
+
+func (r knowledgeRepositoryStub) SearchTextBackfill(c context.Context, owner string) ([]domain.Knowledge, error) {
+	return r.backfill(c, owner)
+}
+
+func (r knowledgeRepositoryStub) SetSearchText(c context.Context, owner, id, value string) error {
+	return r.setSearchText(c, owner, id, value)
+}
+
 func (r knowledgeRepositoryStub) StageObjects(c context.Context, keys []string, put func() error) error {
 	return r.stage(c, keys, put)
+}
+
+func (r knowledgeRepositoryStub) CreateDraft(c context.Context, draft domain.Draft) error {
+	return r.create(c, draft)
 }
 
 func (r knowledgeRepositoryStub) Save(c context.Context, k domain.Knowledge, v int64) (domain.Knowledge, error) {
@@ -123,6 +148,42 @@ func TestKnowledgeRejectsUnauthorizedOperations(t *testing.T) {
 			require.ErrorIs(t, err, test.want)
 		})
 	}
+}
+
+func TestKnowledgeListValidatesBeforeAndOnlyBackfillsSearches(t *testing.T) {
+	var backfillCalls int
+
+	repo := knowledgeRepositoryStub{
+		list: func(_ context.Context, _ string, query domain.ListQuery) (domain.KnowledgePage, error) {
+			require.Empty(t, query.Query)
+
+			return domain.KnowledgePage{Page: 1, PageSize: 10}, nil
+		},
+		backfill: func(context.Context, string) ([]domain.Knowledge, error) {
+			backfillCalls++
+
+			return nil, domain.ErrUnavailable
+		},
+	}
+	u := NewKnowledgeUseCase(repo, nil, nil, sessionCheck(activeSession))
+	p := domain.Principal{OwnerID: "owner", SessionID: "session"}
+
+	page, err := u.List(t.Context(), p, domain.ListQuery{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Equal(t, 1, page.Page)
+	require.Zero(t, backfillCalls)
+
+	_, err = u.List(
+		t.Context(),
+		p,
+		domain.ListQuery{Query: strings.Repeat("x", domain.MaxSearchRunes+1), Page: 1, PageSize: 10},
+	)
+	require.ErrorIs(t, err, domain.ErrBadRequest)
+	require.Zero(t, backfillCalls)
+
+	_, err = u.List(t.Context(), p, domain.ListQuery{Query: "body", Page: 1, PageSize: 10})
+	require.ErrorIs(t, err, domain.ErrUnavailable)
+	require.Equal(t, 1, backfillCalls)
 }
 
 func TestKnowledgeSave(t *testing.T) {
@@ -277,6 +338,40 @@ func TestKnowledgeSave(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKnowledgeUploadExtractsMetadataAndStagesOneObject(t *testing.T) {
+	var saved domain.Draft
+
+	objects := objectStub{put: func(_ context.Context, key, source string) error {
+		require.True(t, strings.HasPrefix(key, "knowledge/"))
+		require.Equal(t, "---\ntitle: 本文タイトル\ntags: [go, db]\n---\n本文", source)
+
+		return nil
+	}}
+	repo := knowledgeRepositoryStub{
+		stage: func(_ context.Context, keys []string, put func() error) error {
+			require.Len(t, keys, 1)
+			return put()
+		},
+		create: func(_ context.Context, draft domain.Draft) error {
+			saved = draft
+			return nil
+		},
+	}
+	u := NewKnowledgeUseCase(repo, objects, htmlsafe.New(), sessionCheck(activeSession))
+	draft, err := u.Upload(
+		t.Context(),
+		domain.Principal{OwnerID: "owner", SessionID: "session"},
+		"ignored.md",
+		"---\ntitle: 本文タイトル\ntags: [go, db]\n---\n本文",
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, saved.DraftID, draft.DraftID)
+	require.Equal(t, "本文タイトル", draft.Title)
+	require.Equal(t, []string{"go", "db"}, draft.Tags)
+	require.Equal(t, "markdown", draft.Format)
 }
 
 func TestKnowledgeCommitRetry(t *testing.T) {
