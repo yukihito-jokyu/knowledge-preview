@@ -1,17 +1,25 @@
-# 知識の保存・配信（Issue #14）
+# 知識の保存・配信（Issue #14）と認証（Issue #19）
 
-`internal/usecase/knowledge.go` が詳細、最近10件、本文保存、draft確定、公開切替、HTML配信を実装する。HTTPは `/api/v1/knowledge` と `/api/v1/knowledge-drafts` に登録する。認証 #19 は未実装のため、標準起動の管理APIは401で拒否する。テストだけの認証や所有者指定ヘッダーを製品へ追加していない。
+`internal/usecase/auth.go` がGitHub OAuthのPKCE/state、HS256 access JWT、refresh rotation/reuse検知、セッション失効を担う。`internal/interface/http/auth.go` は `/api/v1/auth/github/start`、`/api/v1/auth/github/callback`、`/api/v1/auth/session`、`/api/v1/auth/refresh`、`/api/v1/auth/logout` を公開する。OAuth state・PKCE verifier・refresh tokenはハッシュだけを `auth_oauth_states` / `auth_refresh_sessions` へ保存し、開始ブラウザには短命HttpOnly Cookieでverifierを束縛する。refresh familyの失効行をrotation・reuse・logoutでロックし、認証監査は種別・GitHub ID・時刻だけを90日保持する。
+
+認証Cookieは `__Host-kp_access` / `__Host-kp_refresh` のhost-only、Secure、HttpOnly、SameSite=Lax、Path=/である。変更APIは設定済みの `APP_ORIGIN` と完全一致するOriginだけを受け付ける。GitHub IDのallowlist、JWT鍵、issuer/audience、OAuth Secretは環境変数またはSecretへ置き、ログへ出力しない。本番のOAuth接続先はGitHub固定で、`APP_ENV=test` または `local` のときだけテストプロバイダーURLを許可する。
+
+OAuth開始は `200 {"authorizeUrl":"..."}` を返し、callbackの成功は元の相対pathへ303、失敗は外部エラー詳細を転送せず `/login?error=<固定コード>` へ303する。OAuth拒否・state不一致・provider障害も監査分類を残し、refresh Cookieだけでのlogoutも所有者を記録する。
+
+OAuthのstart/callbackは、境界Nginxでは接続元IP単位で共有10回/分に制限する。Nginxを経由しない標準API・backend直結でも無制限にならないよう、HTTP processごとにcapacity 600・補充600回/分の共有bucketを安全網として適用する。このprocess-wide上限は複数利用者で共有するため、利用者別10回/分の制限とは役割を分ける。Ginは任意の転送ヘッダーをrate limit判定へ使わない。
+
+`internal/usecase/knowledge.go` が詳細、最近10件、本文保存、draft確定、公開切替、HTML配信を実装する。HTTPは `/api/v1/knowledge` と `/api/v1/knowledge-drafts` に登録する。標準起動の管理APIは検証済みJWTと有効なrefresh sessionを要求する。テストだけの認証や所有者指定ヘッダーを製品へ追加していない。
 
 ## 接続する境界
 
-- #19: `http.Authenticate` で署名検証済み `domain.Principal{OwnerID, SessionID}` を返し、`usecase.Sessions.Active` をプライマリDBのsession有効性照会へ実装する。標準起動の `nil` と `DenySessions{}` を同時に置き換える。認証Cookieはhost-onlyとし、logoutは失効commit後に成功を返す。照会は発行時・各HTML配信時に行い、キャッシュやJWTのみの判定は禁止する。URLを持つ人は発行元sessionが有効な間は本文を取得できる。配信済み本文の遠隔消去は行わない。
-- #15: アップロード、初期metadata抽出、フォルダ作成は未実装。`knowledge_folders` と `knowledge_drafts` の共有schemaを使い、private objectを `knowledge_objects` へ記録してdraftから参照する。sourceやmetadataを時間で消さない。HTML検証は `domain.ApplySource` と `htmlsafe.New().Sanitize` を共有する。draftから参照中のobjectと確定済みIDは回収しない。
-- #16: 検索・一覧は未実装。knowledgeのmetadataとsource参照を使用する。閲覧のみでは `updated_at` を変えない。
+- #19: `http.Authenticate` で署名検証済み `domain.Principal{OwnerID, SessionID}` を返し、`usecase.Sessions.Active` をプライマリDBのsession有効性照会へ実装する。認証Cookieはhost-onlyとし、logoutは失効commit後に成功を返す。照会は発行時・各HTML配信時に行い、キャッシュやJWTのみの判定は禁止する。URLを持つ人は発行元sessionが有効な間は本文を取得できる。配信済み本文の遠隔消去は行わない。
+- #15: `POST /api/v1/knowledge-drafts` が1件のMarkdown/HTMLを検証し、private objectとdraftを作成する。`knowledge_folders` と `knowledge_drafts` の共有schemaを使い、sourceやmetadataを時間で消さない。HTML検証は `domain.ApplySource` と `htmlsafe.New().Sanitize` を共有する。draftから参照中のobjectと確定済みIDは回収しない。
+- #16: `GET /api/v1/knowledge` と folder API が、owner境界・検索・ANDタグ・安定pagination・親子folder・version競合・循環拒否を提供する。検索本文は `knowledge.search_text` へ投影し、PostgreSQLのcanonical tsqueryでAND・OR・除外を評価する。引用符・hyphen由来の位置演算子はANDへ変換し、語順・隣接は要求しない。閲覧だけでは `updated_at` を変えない。
 - #17: 公開DTO/画面は未実装。`KnowledgeRepository.Public` は publicId・現在version・unlistedを毎回照合する。公開DTOは内部ID/owner/folder/sourceKeyを投影しない。HTMLのURLは `PREVIEW_ORIGIN/public/{publicId}/html?version=N`。公開画面のURLは `APP_ORIGIN/public/knowledge/{publicId}`。最初のpublicIdを停止後も保持し、再公開に再利用する。
 
 ## DBとprivateストレージ
 
-`migrations/000001_knowledge.up.sql` と `down.sql` をgolang-migrateで適用・巻戻す。自動適用や既存DB初期化はAPI起動へ追加していない。owner_id/session_idは#19の安定識別子を受けるtextで、独自のユーザー・認証テーブルを作らない。folderは所有者との複合外部キーで照合する。
+`migrations/000001_knowledge.up.sql` 以降のSQL migrationをgolang-migrateで適用・巻戻す。適用済みmigrationは変更せず、`000003_knowledge_library` でfolder階層/versionと検索本文投影を追加する。自動適用や既存DB初期化はAPI起動へ追加していない。owner_id/session_idは#19の安定識別子を受けるtextで、独自のユーザー・認証テーブルを作らない。folderは所有者との複合外部キーで照合する。
 
 [.env.example](.env.example) の `APP_ORIGIN`、`PREVIEW_ORIGIN`、`S3_*` を全て設定し、MinIO/S3にprivate bucketを用意する。未設定時もhealth/readyは従来どおり動く。originはパスなしHTTPS、previewはCookieを隔離できる別hostnameを必須とする。S3へクライアントをredirectせずGo経由で本文を返す。
 

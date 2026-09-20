@@ -43,6 +43,18 @@ func toAPIError(err error) (int, apiError) {
 		}
 	case errors.Is(err, domain.ErrUnavailable):
 		return http.StatusServiceUnavailable, apiError{Code: "unavailable", Message: "a dependency is unavailable"}
+	case errors.Is(err, domain.ErrOAuth):
+		return http.StatusServiceUnavailable, apiError{
+			Code:    "oauth_unavailable",
+			Message: "authentication provider is unavailable",
+		}
+	case errors.Is(err, domain.ErrRateLimited):
+		return http.StatusTooManyRequests, apiError{
+			Code:    "rate_limited",
+			Message: "too many requests",
+		}
+	case errors.Is(err, domain.ErrRefreshReuse):
+		return http.StatusUnauthorized, apiError{Code: "unauthenticated", Message: "authentication is required"}
 	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound, apiError{Code: "not_found", Message: "resource was not found"}
 	case errors.Is(err, domain.ErrForbidden):
