@@ -40,6 +40,21 @@ func (handlerRepository) Get(_ context.Context, owner, id string) (domain.Knowle
 	}, nil
 }
 
+func (handlerRepository) PublicCurrent(_ context.Context, id string) (domain.Knowledge, error) {
+	return domain.Knowledge{
+		PublicID:  &id,
+		Title:     "public title",
+		Format:    "markdown",
+		Tags:      []string{"go"},
+		Version:   2,
+		SourceKey: "source",
+	}, nil
+}
+
+func (handlerRepository) PublicRelated(context.Context, string, []string) ([]domain.Knowledge, error) {
+	return nil, nil
+}
+
 type handlerObjects struct {
 	putErr error
 }
@@ -719,4 +734,46 @@ func TestKnowledgeHTTPBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPublicKnowledgeHTTPIsUnauthenticatedAndAllowListed(t *testing.T) {
+	publicID := strings.Repeat("A", 43)
+	u := usecase.NewKnowledgeUseCase(handlerRepository{}, handlerObjects{}, htmlsafe.New(), nil)
+	router := NewRouter(
+		usecase.NewReadinessUseCase(fakeReadinessChecker{}),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	RegisterKnowledge(router, u, nil, "https://app.test", "https://preview.test")
+
+	request := httptest.NewRequest(http.MethodGet, "https://app.test/api/v1/public/knowledge/"+publicID, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	require.Equal(t, "noindex, nofollow", recorder.Header().Get("X-Robots-Tag"))
+	require.Empty(t, recorder.Header().Get("ETag"))
+	require.Contains(t, recorder.Body.String(), `"publicId":"`+publicID+`"`)
+	require.Contains(t, recorder.Body.String(), `"markdown":"# body"`)
+	require.Contains(t, recorder.Body.String(), `"publicScope":"unlisted"`)
+	require.NotContains(t, recorder.Body.String(), `"sourceKey"`)
+	require.NotContains(t, recorder.Body.String(), `"ownerId"`)
+	require.NotContains(t, recorder.Body.String(), `"id"`)
+}
+
+func TestPublicKnowledgeHTTPRejectsInvalidPublicID(t *testing.T) {
+	u := usecase.NewKnowledgeUseCase(handlerRepository{}, handlerObjects{}, htmlsafe.New(), nil)
+	router := NewRouter(
+		usecase.NewReadinessUseCase(fakeReadinessChecker{}),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	RegisterKnowledge(router, u, nil, "https://app.test", "https://preview.test")
+
+	request := httptest.NewRequest(http.MethodGet, "https://app.test/api/v1/public/knowledge/not-valid", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	require.Equal(t, "noindex, nofollow", recorder.Header().Get("X-Robots-Tag"))
 }
