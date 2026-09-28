@@ -55,6 +55,9 @@ func RegisterKnowledge(
 	api.PATCH("/folders/:id", h.updateFolder)
 	api.DELETE("/folders/:id", h.deleteFolder)
 
+	public := router.Group("/api/v1/public", h.publicHeaders, h.appHost)
+	public.GET("/knowledge/:publicId", h.public)
+
 	router.GET("/private/html", h.previewHost, h.privateHTML)
 	router.GET("/public/:publicId/html", h.previewHost, h.publicHTML)
 }
@@ -70,6 +73,11 @@ func (h *KnowledgeHandler) appHost(c *gin.Context) {
 		}
 	}
 
+	c.Next()
+}
+
+func (h *KnowledgeHandler) publicHeaders(c *gin.Context) {
+	c.Header("X-Robots-Tag", "noindex, nofollow")
 	c.Next()
 }
 
@@ -704,7 +712,7 @@ func (h *KnowledgeHandler) privateHTML(c *gin.Context) {
 
 func (h *KnowledgeHandler) publicHTML(c *gin.Context) {
 	version, err := strconv.ParseInt(c.Query("version"), 10, 64)
-	if err != nil || version < 1 || version > domain.MaxVersion || len(c.Param("publicId")) != 43 {
+	if err != nil || version < 1 || version > domain.MaxVersion || !domain.ValidPublicID(c.Param("publicId")) {
 		response.WriteError(c, domain.ErrNotFound)
 		return
 	}
@@ -716,4 +724,21 @@ func (h *KnowledgeHandler) publicHTML(c *gin.Context) {
 	}
 
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(content))
+}
+
+func (h *KnowledgeHandler) public(c *gin.Context) {
+	publicID := c.Param("publicId")
+
+	k, source, summary, related, err := h.usecase.Public(c.Request.Context(), publicID)
+	if err != nil {
+		response.WriteError(c, err)
+		return
+	}
+
+	if k.Format == "html" && h.previewOrigin == "" {
+		response.WriteError(c, domain.ErrUnavailable)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Public(k, publicID, summary, source, h.previewOrigin, related))
 }
