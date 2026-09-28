@@ -15,6 +15,8 @@ import (
 const (
 	faultDatabase = "database"
 	faultObject   = "object"
+	faultPublic   = "public"
+	faultGet      = "get"
 )
 
 type faultController struct {
@@ -59,6 +61,22 @@ func (r *faultRepository) CreateDraft(ctx context.Context, draft domain.Draft) e
 	return r.KnowledgeRepository.CreateDraft(ctx, draft)
 }
 
+func (r *faultRepository) PublicCurrent(ctx context.Context, id string) (domain.Knowledge, error) {
+	if r.faults.consume(faultPublic) {
+		return domain.Knowledge{}, domain.ErrUnavailable
+	}
+
+	return r.KnowledgeRepository.PublicCurrent(ctx, id)
+}
+
+func (r *faultRepository) Public(ctx context.Context, id string, version int64) (domain.Knowledge, error) {
+	if r.faults.consume(faultPublic) {
+		return domain.Knowledge{}, domain.ErrUnavailable
+	}
+
+	return r.KnowledgeRepository.Public(ctx, id, version)
+}
+
 type faultObjects struct {
 	usecase.KnowledgeObjects
 	faults *faultController
@@ -70,6 +88,14 @@ func (o *faultObjects) Put(ctx context.Context, key, source string) error {
 	}
 
 	return o.KnowledgeObjects.Put(ctx, key, source)
+}
+
+func (o *faultObjects) Get(ctx context.Context, key string) (string, error) {
+	if o.faults.consume(faultGet) {
+		return "", domain.ErrUnavailable
+	}
+
+	return o.KnowledgeObjects.Get(ctx, key)
 }
 
 type faultRequest struct {
@@ -96,8 +122,9 @@ func registerTestControls(
 		}
 
 		var request faultRequest
-		if !decodeFixture(c, &request) || (request.Kind != faultDatabase && request.Kind != faultObject) ||
-			request.Count < 1 ||
+		if !decodeFixture(c, &request) ||
+			(request.Kind != faultDatabase && request.Kind != faultObject && request.Kind != faultPublic && request.Kind != faultGet) ||
+			request.Count < 0 ||
 			request.Count > 10 {
 			response.WriteError(c, domain.ErrBadRequest)
 			return
