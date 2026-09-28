@@ -3,6 +3,22 @@ import { authenticatedHeaders } from "../auth/test-session";
 import type { FixtureUser } from "../auth/types";
 
 export type UploadFault = "database" | "object";
+export type PublicFault = "public" | "get";
+
+async function setPublicReadFault(
+  request: APIRequestContext,
+  user: FixtureUser,
+  kind: PublicFault,
+  count: number,
+) {
+  const response = await request.post("/api/v1/__e2e/faults", {
+    headers: authenticatedHeaders(user),
+    data: { kind, count },
+  });
+
+  if (response.status() !== 204)
+    throw new Error(`E2E public fault setup failed: ${response.status()}`);
+}
 
 export async function failNextUpload(
   request: APIRequestContext,
@@ -15,6 +31,22 @@ export async function failNextUpload(
   });
 
   if (response.status() !== 204) throw new Error(`E2E fault setup failed: ${response.status()}`);
+}
+
+export async function failNextPublicRead(
+  request: APIRequestContext,
+  user: FixtureUser,
+  kind: PublicFault,
+) {
+  await setPublicReadFault(request, user, kind, 1);
+}
+
+export async function clearPublicReadFault(
+  request: APIRequestContext,
+  user: FixtureUser,
+  kind: PublicFault,
+) {
+  await setPublicReadFault(request, user, kind, 0);
 }
 
 export async function draftState(request: APIRequestContext, user: FixtureUser) {
