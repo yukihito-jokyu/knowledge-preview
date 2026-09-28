@@ -37,7 +37,7 @@ services:
         condition: service_healthy
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
+    image: docker.io/tobi312/minio:RELEASE.2024-12-18T13-15-44Z@sha256:06fa872b0b35a425f304f8899ea0d99167622e47a5c5b8dda5f9128cf13e13f3
     command: [server, /data, --address, ":9000"]
     environment:
       MINIO_ROOT_USER: e2e-access-key
