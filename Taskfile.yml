@@ -26,7 +26,17 @@ tasks:
       - echo '起動しました。task manual:open で専用ブラウザを開けます。'
 
   manual:open:
-    desc: 認証済みの専用Chromiumを開く（Markdown・HTMLのサンプルdraftを各1件追加）
+    desc: 未認証の専用ChromiumでMarkdown・HTMLの公開画面を開く
+    preconditions:
+      - sh: test -f dev/frontend/e2e/.manual/ca.crt
+        msg: 先に task manual:up を実行してください。
+    cmds:
+      - task: e2e:install
+      - pnpm --dir dev/frontend exec playwright install chromium
+      - node dev/frontend/e2e/scripts/manual.ts --public
+
+  manual:edit:
+    desc: 認証済みの専用ChromiumでMarkdown・HTMLのdraft編集画面を開く
     preconditions:
       - sh: test -f dev/frontend/e2e/.manual/ca.crt
         msg: 先に task manual:up を実行してください。
@@ -36,7 +46,17 @@ tasks:
       - node dev/frontend/e2e/scripts/manual.ts
 
   manual:check:
-    desc: 手動環境でTLS・認証fixture・正式保存・HTML表示を検証する
+    desc: 手動環境で未認証の公開Markdown・HTML表示を検証する
+    preconditions:
+      - sh: test -f dev/frontend/e2e/.manual/ca.crt
+        msg: 先に task manual:up を実行してください。
+    cmds:
+      - task: e2e:install
+      - pnpm --dir dev/frontend exec playwright install chromium
+      - node dev/frontend/e2e/scripts/manual.ts --public --check
+
+  manual:edit:check:
+    desc: 手動環境でdraft編集・正式保存・HTML表示を検証する
     preconditions:
       - sh: test -f dev/frontend/e2e/.manual/ca.crt
         msg: 先に task manual:up を実行してください。
