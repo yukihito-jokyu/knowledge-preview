@@ -637,6 +637,48 @@ func (r *KnowledgeRepository) Public(ctx context.Context, id string, version int
 	)
 }
 
+func (r *KnowledgeRepository) PublicCurrent(ctx context.Context, id string) (domain.Knowledge, error) {
+	return scanKnowledge(
+		r.pool.QueryRow(
+			ctx,
+			`SELECT `+knowledgeColumns+` FROM knowledge k LEFT JOIN knowledge_folders f ON f.id=k.folder_id WHERE k.public_id=$1 AND k.visibility='unlisted'`,
+			id,
+		),
+	)
+}
+
+func (r *KnowledgeRepository) PublicRelated(
+	ctx context.Context,
+	id string,
+	tags []string,
+) ([]domain.Knowledge, error) {
+	rows, err := r.pool.Query(
+		ctx,
+		`SELECT `+knowledgeColumns+` FROM knowledge k LEFT JOIN knowledge_folders f ON f.id=k.folder_id
+		 WHERE k.public_id<>$1 AND k.visibility='unlisted' AND k.tags && $2
+		 ORDER BY cardinality(ARRAY(SELECT tag FROM unnest(k.tags) tag WHERE tag = ANY($2))) DESC,k.updated_at DESC,k.public_id ASC LIMIT 3`,
+		id,
+		tags,
+	)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+
+	result := []domain.Knowledge{}
+
+	for rows.Next() {
+		k, scanErr := scanKnowledge(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+
+		result = append(result, k)
+	}
+
+	return result, dbError(rows.Err())
+}
+
 func (r *KnowledgeRepository) Folders(ctx context.Context, owner string) ([]domain.Folder, error) {
 	rows, err := r.pool.Query(
 		ctx,

@@ -1,10 +1,76 @@
 package response
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/domain"
 )
+
+type PublicKnowledge struct {
+	PublicID    string          `json:"publicId"`
+	Title       string          `json:"title"`
+	Format      string          `json:"format"`
+	Tags        []string        `json:"tags"`
+	Version     int64           `json:"version"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+	PublicScope string          `json:"publicScope"`
+	Summary     string          `json:"summary"`
+	Content     PublicContent   `json:"content"`
+	Related     []PublicRelated `json:"related"`
+}
+
+type PublicContent struct {
+	Markdown string `json:"markdown,omitempty"`
+	HTMLURL  string `json:"htmlUrl,omitempty"`
+}
+
+type PublicRelated struct {
+	PublicID string `json:"publicId"`
+	Title    string `json:"title"`
+	Format   string `json:"format"`
+	Summary  string `json:"summary"`
+}
+
+func Public(
+	k domain.Knowledge,
+	publicID, summary, source, previewOrigin string,
+	related []domain.PublicRelated,
+) PublicKnowledge {
+	if k.Tags == nil {
+		k.Tags = []string{}
+	}
+
+	content := PublicContent{Markdown: source}
+	if k.Format == "html" {
+		content = PublicContent{
+			HTMLURL: previewOrigin + "/public/" + publicID + "/html?version=" + strconv.FormatInt(k.Version, 10),
+		}
+	}
+
+	items := make([]PublicRelated, 0, len(related))
+	for _, item := range related {
+		items = append(items, PublicRelated{
+			PublicID: item.PublicID,
+			Title:    item.Title,
+			Format:   item.Format,
+			Summary:  item.Summary,
+		})
+	}
+
+	return PublicKnowledge{
+		PublicID:    publicID,
+		Title:       k.Title,
+		Format:      k.Format,
+		Tags:        k.Tags,
+		Version:     k.Version,
+		UpdatedAt:   k.UpdatedAt,
+		PublicScope: "unlisted",
+		Summary:     summary,
+		Content:     content,
+		Related:     items,
+	}
+}
 
 type KnowledgeDetail struct {
 	ID             string         `json:"id"`

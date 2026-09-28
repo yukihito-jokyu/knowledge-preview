@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/base64"
 	"errors"
 	"regexp"
 	"time"
@@ -21,6 +22,16 @@ var (
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 func ValidID(id string) bool { return uuidPattern.MatchString(id) }
+
+func ValidPublicID(id string) bool {
+	if len(id) != 43 {
+		return false
+	}
+
+	value, err := base64.RawURLEncoding.DecodeString(id)
+
+	return err == nil && len(value) == 32
+}
 
 type FieldError struct {
 	Field  string `json:"field"`
@@ -49,6 +60,13 @@ type Knowledge struct {
 	HTMLKey        string
 	HTMLSanitized  bool
 	SearchText     string
+}
+
+type PublicRelated struct {
+	PublicID string
+	Title    string
+	Format   string
+	Summary  string
 }
 type Draft struct {
 	Knowledge

@@ -8,7 +8,7 @@
 
 Issue #5・#6は完了扱いだが、この文書の追加時点では、リポジトリに独立した各層の検証規約文書はない。既存のARCHITECTURE.mdを参照元とし、独立文書を追加した際はこのリンクも更新する。
 
-現在のAPIはヘルスチェックまで、画面は主に配置と共通基盤までの実装である。`dev/frontend/e2e/`、`dev/compose.test.yaml`、ルートTaskfileは雛形を配置済みである。既存SPA・API・PostgreSQLの起動、TLS設定、3ブラウザの環境疎通テストを実装している。OAuthの業務処理、業務migration・seed、X01〜X07、横断CIは未実装である。本Issueでは規約を定め、以下の環境とシナリオの実装は対応する機能・基盤変更で行う。規約の完成をE2Eの成功として扱わない。
+現在のAPIはヘルスチェックとIssue #17の公開知識取得まで、画面は共通基盤と公開閲覧画面まで実装済みである。`dev/frontend/e2e/`、`dev/compose.test.yaml`、ルートTaskfileは実APIへ接続する基盤を配置済みである。既存SPA・API・PostgreSQL・MinIOの起動、TLS設定、3ブラウザの環境疎通テストに加え、公開JSON・公開Markdown・別origin HTML iframe・更新／停止／再公開・公開読取503回復を実装している。OAuthの業務処理、MCPトークン、業務migration・seed、X01〜X03・X05・X06、横断CIは未実装であり、公開閲覧に該当するX04・X07だけがIssue #17の対象である。規約の完成をE2Eの成功として扱わない。
 
 ## 該当条件と責務
 

@@ -24,6 +24,8 @@ type knowledgeRepositoryStub struct {
 	save          func(context.Context, domain.Knowledge, int64) (domain.Knowledge, error)
 	grant         func(context.Context, domain.PreviewGrant) error
 	preview       func(context.Context, string) (domain.PreviewGrant, error)
+	publicCurrent func(context.Context, string) (domain.Knowledge, error)
+	publicRelated func(context.Context, string, []string) ([]domain.Knowledge, error)
 	backfill      func(context.Context, string) ([]domain.Knowledge, error)
 	setSearchText func(context.Context, string, string, string) error
 }
@@ -70,6 +72,18 @@ func (r knowledgeRepositoryStub) Grant(c context.Context, g domain.PreviewGrant)
 
 func (r knowledgeRepositoryStub) Preview(c context.Context, hash string) (domain.PreviewGrant, error) {
 	return r.preview(c, hash)
+}
+
+func (r knowledgeRepositoryStub) PublicCurrent(c context.Context, id string) (domain.Knowledge, error) {
+	return r.publicCurrent(c, id)
+}
+
+func (r knowledgeRepositoryStub) PublicRelated(
+	c context.Context,
+	id string,
+	tags []string,
+) ([]domain.Knowledge, error) {
+	return r.publicRelated(c, id, tags)
 }
 
 type sessionCheck func(context.Context, domain.Principal) (bool, error)
@@ -184,6 +198,313 @@ func TestKnowledgeListValidatesBeforeAndOnlyBackfillsSearches(t *testing.T) {
 	_, err = u.List(t.Context(), p, domain.ListQuery{Query: "body", Page: 1, PageSize: 10})
 	require.ErrorIs(t, err, domain.ErrUnavailable)
 	require.Equal(t, 1, backfillCalls)
+}
+
+func TestKnowledgePublicStripsFrontMatterAndDerivesRelatedSummaries(t *testing.T) {
+	publicID := strings.Repeat("A", 43)
+	relatedID := strings.Repeat("B", 43)
+	repo := knowledgeRepositoryStub{
+		publicCurrent: func(_ context.Context, id string) (domain.Knowledge, error) {
+			require.Equal(t, publicID, id)
+
+			return domain.Knowledge{
+				PublicID:  &id,
+				Title:     "公開記事",
+				Format:    "markdown",
+				Tags:      []string{"go"},
+				Version:   2,
+				SourceKey: "current",
+			}, nil
+		},
+		publicRelated: func(_ context.Context, id string, tags []string) ([]domain.Knowledge, error) {
+			require.Equal(t, publicID, id)
+			require.Equal(t, []string{"go"}, tags)
+
+			return []domain.Knowledge{{
+				PublicID:  &relatedID,
+				Title:     "関連記事",
+				Format:    "markdown",
+				SourceKey: "related",
+			}}, nil
+		},
+	}
+	objects := objectStub{get: func(_ context.Context, key string) (string, error) {
+		sources := map[string]string{
+			"current": "---\ntitle: ignored\ntags: [go]\n---\n# 見出し\n\n```md\n```go\ncode_inside_fence()\n   ```  \n\n説明文 **本文** foo_bar [link](https://example.test)",
+			"related": "```md\n    ```\ncode_inside_fence()\n```\n\n**関連記事** foo_bar",
+		}
+
+		return sources[key], nil
+	}}
+
+	k, source, summary, related, err := NewKnowledgeUseCase(
+		repo,
+		objects,
+		nil,
+		DenySessions{},
+	).Public(t.Context(), publicID)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"# 見出し\n\n```md\n```go\ncode_inside_fence()\n   ```  \n\n説明文 **本文** foo_bar [link](https://example.test)",
+		source,
+	)
+	require.Equal(t, "説明文 本文 foo_bar link", summary)
+	require.EqualValues(t, 2, k.Version)
+	require.Equal(t, []domain.PublicRelated{{
+		PublicID: relatedID,
+		Title:    "関連記事",
+		Format:   "markdown",
+		Summary:  "関連記事 foo_bar",
+	}}, related)
+}
+
+func TestKnowledgePublicHidesRelatedOnDependencyFailure(t *testing.T) {
+	publicID := strings.Repeat("A", 43)
+	repo := knowledgeRepositoryStub{
+		publicCurrent: func(context.Context, string) (domain.Knowledge, error) {
+			return domain.Knowledge{
+				PublicID:  &publicID,
+				Format:    "markdown",
+				SourceKey: "current",
+				Tags:      []string{"go"},
+			}, nil
+		},
+		publicRelated: func(context.Context, string, []string) ([]domain.Knowledge, error) {
+			return nil, domain.ErrUnavailable
+		},
+	}
+	objects := objectStub{get: func(context.Context, string) (string, error) { return "body", nil }}
+
+	_, _, _, related, err := NewKnowledgeUseCase(repo, objects, nil, DenySessions{}).Public(t.Context(), publicID)
+	require.NoError(t, err)
+	require.Empty(t, related)
+}
+
+var markdownSummaryCases = []struct {
+	name string
+	body string
+	want string
+}{
+	{name: "fence immediately after paragraph", body: "説明文\n```go\ncode_inside_fence()\n```", want: "説明文"},
+	{name: "leading indented code", body: "    code()\n\n説明文", want: "説明文"},
+	{name: "underscore in ordinary text", body: "foo_bar", want: "foo_bar"},
+	{name: "shorter inner fence", body: "````md\n```go\ncode_inside_fence()\n```\n````\n\n説明文", want: "説明文"},
+	{name: "indented paragraph continuation", body: "説明文\n    続きの説明", want: "説明文 続きの説明"},
+	{name: "closing fence with info string", body: "```md\n```go\ncode_inside_fence()\n   ```  \n\n説明文", want: "説明文"},
+	{name: "four-space closing fence", body: "```md\n    ```\ncode_inside_fence()\n```\n\n説明文", want: "説明文"},
+	{name: "backtick in backtick info string", body: "```a`b\n\n説明文", want: "```a`b"},
+	{name: "space and tab indent", body: " \t```go\n\n説明文", want: "説明文"},
+	{name: "whitespace-only blank", body: "説明文\n    \n後続段落", want: "説明文"},
+	{name: "lazy blockquote continuation", body: "> 引用\n引用の続き\n\n説明文", want: "説明文"},
+	{name: "lazy list continuation", body: "- 項目\n項目の続き\n\n説明文", want: "説明文"},
+	{name: "setext heading", body: "見出し\n======\n\n説明文", want: "説明文"},
+	{name: "ATX heading without blank", body: "# 見出し\n説明文", want: "説明文"},
+	{name: "GFM table", body: "名前 | 値\n--- | ---\na | b\n\n説明文", want: "説明文"},
+	{name: "HTML block", body: "<div>\nhidden\n</div>\n\n説明文", want: "説明文"},
+	{name: "HTML script block", body: "<script>\n\nhidden\n</script>\n\n説明文", want: "説明文"},
+	{name: "multiline setext heading", body: "見出し1\n見出し2\n===\n\n説明文", want: "説明文"},
+	{name: "reference definition", body: "[r]: https://example.test\n\n説明文", want: "説明文"},
+	{name: "empty ATX heading", body: "#\n\n説明文", want: "説明文"},
+	{name: "CR-only line endings", body: "```go\rcode\r```\r説明文", want: "説明文"},
+	{name: "operators and emphasis", body: "説明文 **本文** 2 * 3 = 6 foo_bar", want: "説明文 本文 2 * 3 = 6 foo_bar"},
+	{name: "code span keeps operators", body: "`a * b`", want: "a * b"},
+	{name: "code span keeps entity", body: "`&amp;`", want: "&amp;"},
+	{name: "autolink", body: "<https://example.test>", want: "https://example.test"},
+	{
+		name: "autolink keeps invalid numeric entity literal",
+		body: "<https://example.test/&#x85;>",
+		want: "https://example.test/&#x85;",
+	},
+	{name: "reference link", body: "[link][r]\n\n[r]: https://example.test", want: "link"},
+	{name: "missing reference link", body: "[link][missing]", want: "[link][missing]"},
+	{name: "comparison expression", body: "a < b > c", want: "a < b > c"},
+	{name: "nested link destination", body: "[link](https://example.test/a(b))", want: "link"},
+	{name: "unmatched code span", body: "`a `` b`", want: "a `` b"},
+	{name: "HTML entity", body: "A &amp; B", want: "A & B"},
+	{name: "escaped entity", body: `\&amp;`, want: "&amp;"},
+	{name: "numeric entity followed by text", body: "&#38;amp;", want: "&amp;"},
+	{name: "invalid numeric entity in emphasis", body: "**&#x85;**", want: "�"},
+	{name: "numeric entity with leading zeroes", body: "&#0000065;", want: "A"},
+	{name: "numeric C1 lower boundary", body: "&#x80;", want: "�"},
+	{name: "numeric C0 lower boundary", body: "&#0;", want: "�"},
+	{name: "numeric C0 upper boundary", body: "&#x1F;", want: "�"},
+	{name: "numeric C1 whitespace", body: "&#x85;\n\n説明文", want: "�"},
+	{name: "numeric C1 decimal lower boundary", body: "&#128;", want: "�"},
+	{name: "numeric C1 upper boundary", body: "&#x9F;", want: "�"},
+	{name: "numeric C1 in paragraph", body: "a &#128; b", want: "a � b"},
+	{name: "numeric C0 vertical tab", body: "&#xB;", want: "�"},
+	{name: "numeric DEL", body: "&#x7F;", want: "�"},
+	{name: "numeric null", body: "&#0;", want: "�"},
+	{name: "numeric surrogate", body: "&#xD800;", want: "�"},
+	{name: "numeric surrogate upper boundary", body: "&#xDFFF;", want: "�"},
+	{name: "numeric out of range", body: "&#x110000;", want: "�"},
+	{name: "numeric decimal out of range", body: "&#1114112;", want: "�"},
+	{name: "numeric noncharacter", body: "&#xFDD0;", want: "�"},
+	{name: "numeric noncharacter ending", body: "&#xFFFE;", want: "�"},
+	{name: "numeric noncharacter upper ending", body: "&#xFFFF;", want: "�"},
+	{name: "numeric valid hexadecimal", body: "&#x41;", want: "A"},
+	{name: "literal C1 remains source text", body: "a\u0085b", want: "a b"},
+	{name: "escaped numeric entity", body: `\&#xB;`, want: "&#xB;"},
+	{name: "code span keeps numeric entity", body: "`&#xB;`", want: "&#xB;"},
+	{name: "autolink entity", body: "<https://example.test/?a=1&amp;b=2>", want: "https://example.test/?a=1&amp;b=2"},
+	{name: "autolink escaped punctuation", body: `<https://example.test/a\_b>`, want: `https://example.test/a\_b`},
+	{name: "code span keeps surrounding spaces", body: "前`  code  `後", want: "前 code 後"},
+	{name: "unmatched code span stays in its paragraph", body: "` &#x85;\n\n`", want: "` �"},
+	{name: "heading backtick does not span paragraphs", body: "# `\n\n&#x85;\n\n`", want: "�"},
+	{
+		name: "raw HTML attribute backtick does not span paragraphs",
+		body: "<span title=\"`\">&#x85;</span>\n\n`",
+		want: "�",
+	},
+	{name: "indented code backtick does not span paragraphs", body: "    `\n\n&#x85;\n\n`", want: "�"},
+	{name: "empty HTML paragraph", body: "<span></span>\n\n説明文", want: "説明文"},
+	{name: "empty entity paragraph", body: "&nbsp;\n\n説明文", want: "説明文"},
+	{
+		name: "existing bold and inline link",
+		body: "説明文 **本文** foo_bar [link](https://example.test)",
+		want: "説明文 本文 foo_bar link",
+	},
+}
+
+func TestKnowledgePublicSummariesUseMarkdownSummaryTable(t *testing.T) {
+	for _, test := range markdownSummaryCases {
+		t.Run(test.name, func(t *testing.T) {
+			publicID := strings.Repeat("A", 43)
+			relatedID := strings.Repeat("B", 43)
+			repo := knowledgeRepositoryStub{
+				publicCurrent: func(_ context.Context, id string) (domain.Knowledge, error) {
+					return domain.Knowledge{
+						PublicID:  &id,
+						Format:    "markdown",
+						Tags:      []string{"go"},
+						SourceKey: "current",
+					}, nil
+				},
+				publicRelated: func(context.Context, string, []string) ([]domain.Knowledge, error) {
+					return []domain.Knowledge{{
+						PublicID:  &relatedID,
+						Format:    "markdown",
+						SourceKey: "related",
+					}}, nil
+				},
+			}
+			objects := objectStub{get: func(context.Context, string) (string, error) { return test.body, nil }}
+
+			_, _, summary, related, err := NewKnowledgeUseCase(
+				repo,
+				objects,
+				nil,
+				DenySessions{},
+			).Public(t.Context(), publicID)
+			require.NoError(t, err)
+			require.Equal(t, test.want, summary)
+			require.Len(t, related, 1)
+			require.Equal(t, relatedID, related[0].PublicID)
+			require.Equal(t, test.want, related[0].Summary)
+		})
+	}
+}
+
+func TestKnowledgePublicSummaryUsesCommonFenceStartRules(t *testing.T) {
+	publicID := strings.Repeat("A", 43)
+	relatedID := strings.Repeat("B", 43)
+	repo := knowledgeRepositoryStub{
+		publicCurrent: func(_ context.Context, id string) (domain.Knowledge, error) {
+			return domain.Knowledge{
+				PublicID:  &id,
+				Format:    "markdown",
+				Tags:      []string{"go"},
+				SourceKey: "current",
+			}, nil
+		},
+		publicRelated: func(context.Context, string, []string) ([]domain.Knowledge, error) {
+			return []domain.Knowledge{{
+				PublicID:  &relatedID,
+				Format:    "markdown",
+				SourceKey: "related",
+			}}, nil
+		},
+	}
+	objects := objectStub{get: func(_ context.Context, key string) (string, error) {
+		if key == "current" {
+			return "説明文\n```a`b\n続き", nil
+		}
+
+		return " \t```go\n\n関連記事", nil
+	}}
+
+	_, _, summary, related, err := NewKnowledgeUseCase(
+		repo,
+		objects,
+		nil,
+		DenySessions{},
+	).Public(t.Context(), publicID)
+	require.NoError(t, err)
+	require.Equal(t, "説明文 ```a`b 続き", summary)
+	require.Equal(t, []domain.PublicRelated{{
+		PublicID: relatedID,
+		Format:   "markdown",
+		Summary:  "関連記事",
+	}}, related)
+}
+
+func TestMarkdownSummaryKeepsFenceAndIndentedParagraphBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "fence immediately after paragraph",
+			body: "説明文\n```go\ncode_inside_fence()\n```",
+			want: "説明文",
+		},
+		{
+			name: "leading indented code",
+			body: "    code()\n\n説明文",
+			want: "説明文",
+		},
+		{
+			name: "underscore in ordinary text",
+			body: "foo_bar",
+			want: "foo_bar",
+		},
+		{
+			name: "shorter inner fence",
+			body: "````md\n```go\ncode_inside_fence()\n```\n````\n\n説明文",
+			want: "説明文",
+		},
+		{
+			name: "indented paragraph continuation",
+			body: "説明文\n    続きの説明",
+			want: "説明文 続きの説明",
+		},
+		{
+			name: "closing fence with info string",
+			body: "```md\n```go\ncode_inside_fence()\n   ```  \n\n説明文",
+			want: "説明文",
+		},
+		{
+			name: "four-space closing fence",
+			body: "```md\n    ```\ncode_inside_fence()\n```\n\n説明文",
+			want: "説明文",
+		},
+		{
+			name: "backtick in backtick info string",
+			body: "```a`b\n\n説明文",
+			want: "```a`b",
+		},
+		{
+			name: "space and tab indent",
+			body: " \t```go\n\n説明文",
+			want: "説明文",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, markdownSummary(test.body))
+		})
+	}
 }
 
 func TestKnowledgeSave(t *testing.T) {

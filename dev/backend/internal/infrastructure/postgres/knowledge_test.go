@@ -167,6 +167,11 @@ func TestKnowledgeIntegration(t *testing.T) {
 
 	publicID := *k.PublicID
 	require.EqualValues(t, 2, k.Version)
+
+	current, err := repo.PublicCurrent(ctx, publicID)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, current.Version)
+
 	k, _, err = u.Visibility(ctx, owner, id, 2, "private")
 	require.NoError(t, err)
 	_, err = repo.Public(ctx, publicID, 3)
@@ -197,6 +202,9 @@ func TestKnowledgeIntegration(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 	_, err = repo.Public(ctx, publicID, 5)
 	require.NoError(t, err)
+	current, err = repo.PublicCurrent(ctx, publicID)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, current.Version)
 	// #15が作成するHTMLのdraftを用意し、以降は公開されたユースケースのメソッドだけを使う。
 	htmlID := "22222222-2222-4222-8222-222222222222"
 	_, err = testPool.Exec(

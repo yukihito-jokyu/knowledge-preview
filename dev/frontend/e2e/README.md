@@ -9,22 +9,22 @@
 
 ```bash
 task manual:up     # 構築・起動・疎通確認。E2E_RUN_IDの指定は不要
-task manual:open   # 専用ChromiumでMarkdownとHTMLのdraft編集画面を開く
+task manual:open   # 専用ChromiumでMarkdownとHTMLの公開画面を開く
 # 操作が終わったらブラウザを閉じる（またはCtrl+C）
 task manual:down   # サービスを停止。保存データは残る
 ```
 
-専用Chromiumはテスト所有者Aで認証済みになる。各画面の「正式保存」から保存・編集・公開操作を試せる。HTMLは正式保存後にプレビューを表示する。保存した知識はサイドバーの「最近のファイル」から開ける。`manual:open`を実行するたびにMarkdownとHTMLのサンプルdraftを各1件追加する。
+`manual:open`はMarkdownとHTMLのサンプルを正式保存・限定公開し、Cookieなしの専用Chromiumで公開画面を直接開く。Markdown側は見出し・目次、強調、引用、リスト、タスク、表、コードを含む表示サンプル。公開URLもターミナルへ表示する。実行するたびにサンプル記事が各1件増える。認証済みのdraft編集画面を開く従来の操作は`task manual:edit`を使う。
 
-HTTPSの公開先は`127.0.0.1:443`だけで、DBやMinIOはホストへ公開しない。443番を使用中のサービスがある場合は、そのサービスを停止してから起動する。`https://app.knowledge.test`と`https://preview.knowledge.test`の名前解決・CA信頼は専用Chromiumの一時profileだけに設定するため、通常のブラウザから直接URLを開く用途ではない。OSのhosts・キーチェーンや普段のChrome設定は変更しない。TLS検証は有効で、認証はE2Eと同じテスト用Cookieを利用する。
+HTTPSの公開先は`127.0.0.1:443`だけで、DBやMinIOはホストへ公開しない。443番を使用中のサービスがある場合は、そのサービスを停止してから起動する。`https://app.knowledge.test`と`https://preview.knowledge.test`の名前解決・CA信頼は専用Chromiumの一時profileだけに設定するため、通常のブラウザから直接URLを開く用途ではない。OSのhosts・キーチェーンや普段のChrome設定は変更しない。TLS検証は有効で、公開準備だけにE2Eのテスト用Cookieを使い、公開画面を開く前に削除する。
 
 手動環境はCompose project `knowledge-manual`を使い、自動E2Eの実行IDや動画レポートとは分離する。`manual:down`やブラウザ終了でDB・MinIOのデータは削除しない。再開・コード変更後は`manual:up`→`manual:open`を実行する。`manual:up`は証明書を更新するため、実行前に専用ブラウザを閉じる。テストの`e2e:check`や`e2e:env:down`を手動環境の停止には使わない。
 
-コマンド自体の動作確認には、起動後に`task manual:check`を実行する。専用Chromiumをヘッドレスで起動し、2形式のdraft作成・正式保存・再読込・HTML隔離表示を実API/DB/MinIOで確認して終了する。この確認もサンプルを各1件保存する。実OAuth・ログアウト・アップロード入口・検索一覧・公開専用画面は対象外。
+コマンド自体の動作確認には、起動後に`task manual:check`を実行する。専用Chromiumをヘッドレスで起動し、2形式の正式保存・限定公開・Cookieなし表示を実API/DB/MinIOで確認して終了する。この確認もサンプルを各1件保存する。従来の編集画面の確認は`task manual:edit:check`を使う。実OAuth・ログアウト・アップロード入口・検索一覧は対象外。
 
 ## 準備と実行
 
-Task v3、稼働中のDocker、Docker Compose v2が必要。イメージは`environment/**/Dockerfile*`と[Compose](../../compose.test.yaml)でdigestまで固定しており、`.env`のコピーやイメージの手動指定は不要。
+Task v3、稼働中のDocker、Docker Compose v2が必要。イメージは`environment/**/Dockerfile*`と[Compose](../../compose.test.yaml)でdigestまで固定しており、`.env`のコピーやイメージの手動指定は不要。MinIOの公式Quayイメージが取得不能になったため、同じ`RELEASE.2024-12-18T13-15-44Z`を含む第三者ミラーを固定している。
 依存とnpmスクリプトは`dev/frontend/package.json`へ統合している。コマンドはリポジトリルートで実行する。
 
 ```bash
@@ -49,19 +49,20 @@ OAuth代替は雛形のため、業務要求へ501を返すことも確認する
 
 ## 知識シナリオの実装範囲
 
-`contracts/knowledge/upload.spec.ts` は実multipartのMarkdown/HTML、owner境界、入力違反、10 MiB境界をAPI契約として検証する。`tests/knowledge/upload.spec.ts` はfixture認証でupload画面からdraft編集・正式保存・一覧・再読込、HTML隔離preview、失敗後の再選択を確認する。`tests/knowledge/list-and-folders.spec.ts` は26件pagination・URL検索・親子folderの移動・rename・delete・keyboard focusを確認し、`contracts/knowledge/folders.spec.ts` はcycle・version競合・非空削除・所有者境界を重複なく確認する。
+`contracts/knowledge/upload.spec.ts` は実multipartのMarkdown/HTML、owner境界、入力違反、10 MiB境界をAPI契約として検証する。`tests/knowledge/upload.spec.ts` はfixture認証でupload画面からdraft編集・正式保存・一覧・再読込、HTML隔離preview、失敗後の再選択を確認する。`tests/knowledge/list-and-folders.spec.ts` は26件pagination・URL検索・親子folderの移動・rename・delete・keyboard focusを確認し、`contracts/knowledge/folders.spec.ts` はcycle・version競合・非空削除・所有者境界を重複なく確認する。公開閲覧は `contracts/public-knowledge/public-knowledge.spec.ts` で公開JSONのallow-list・headers・現在版・404・503回復を、`tests/public-knowledge/public-preview.spec.ts` で未認証Markdownの共有・目次・関連記事・320px表示、別origin HTML iframeの隔離とCookie不送信、更新・停止・同一URL再公開、503再試行を確認する。既存の `tests/knowledge/html-preview.spec.ts` と `contracts/knowledge/business.spec.ts` が検証する管理画面のHTML preview・公開HTML lifecycleは重複させない。
 
-認証は `authenticateTestSession` のテスト専用Cookieだけを使う。これらの成功は実OAuthの成功を意味しない。
+公開閲覧specは未認証contextを基本とし、HTML隔離のCookie境界と公開準備・fault設定だけで `authenticateTestSession` のテスト専用Cookieを使う。これらの成功は実OAuthの成功を意味しない。
 
 ## 未実装部分と実装時の参照先
 
-| 入口                                    | 現在の状態                                                                                            |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `fixtures/knowledge/prepare.ts`         | テスト専用fixture APIで実DB/MinIOにdraftを作成する。upload specだけは実multipart入口を使う            |
-| `fixtures/auth/authenticate.ts`         | 実OAuth callback経由でログインする雛形。未実装エラー。knowledge specはテスト専用Cookieを使う          |
-| `environment/init/business-seed.mjs`    | 起動時にmigration/bucketを準備し、各テストがfixture APIまたは実multipart uploadで投入する旨を案内する |
-| `environment/oauth/server.mjs`          | `/health`のみ応答。認可・code交換・PKCE・ユーザー取得は501                                            |
-| `environment/proxy/proxy.conf`のpreview | 別ホストから実Go APIのHTML配信へ接続する                                                              |
+| 入口                                    | 現在の状態                                                                                                                                      |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixtures/knowledge/prepare.ts`         | テスト専用fixture APIで実DB/MinIOにdraftを作成する。公開specは同fixtureをcommit・unlisted公開まで接続し、upload specだけは実multipart入口を使う |
+| `fixtures/knowledge/test-controls.ts`   | 公開JSON／HTML読取の1回消費faultを既存の認証済みテスト制御APIへ設定する                                                                         |
+| `fixtures/auth/authenticate.ts`         | 実OAuth callback経由でログインする雛形。未実装エラー。knowledge specはテスト専用Cookieを使う                                                    |
+| `environment/init/business-seed.mjs`    | 起動時にmigration/bucketを準備し、各テストがfixture APIまたは実multipart uploadで投入する旨を案内する                                           |
+| `environment/oauth/server.mjs`          | `/health`のみ応答。認可・code交換・PKCE・ユーザー取得は501                                                                                      |
+| `environment/proxy/proxy.conf`のpreview | 別ホストから実Go APIのHTML配信へ接続する                                                                                                        |
 
 配置と増やし方は[ディレクトリ設計](../../../docs/testing.md#e2eのディレクトリ設計)、テストの具体化は[横断シナリオ規約](../../../docs/testing.md#必須の横断シナリオ)を参照する。
 作成は[e2e-implement](../../../.agents/skills/e2e-implement/SKILL.md)、レビューは[e2e-review](../../../.agents/skills/e2e-review/SKILL.md)の手順を利用する。既存の`business.spec.ts`と`html-preview.spec.ts`が正式保存後のHTML安全化・古いdraft・更新競合を検証するため、新規specでは同じ経路を複製しない。

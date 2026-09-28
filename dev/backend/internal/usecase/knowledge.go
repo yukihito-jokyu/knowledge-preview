@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,10 +9,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
 	"github.com/yukihito-jokyu/knowledge-preview/dev/backend/internal/domain"
+	nethtml "golang.org/x/net/html"
 )
 
 // Sessions はプライマリDBの現在の状態を確認し、JWTだけやキャッシュで判定しない。
@@ -32,6 +39,8 @@ type KnowledgeRepository interface {
 	Grant(context.Context, domain.PreviewGrant) error
 	Preview(context.Context, string) (domain.PreviewGrant, error)
 	Public(context.Context, string, int64) (domain.Knowledge, error)
+	PublicCurrent(context.Context, string) (domain.Knowledge, error)
+	PublicRelated(context.Context, string, []string) ([]domain.Knowledge, error)
 	Folders(context.Context, string) ([]domain.Folder, error)
 	CreateFolder(context.Context, string, string, *string) (domain.Folder, error)
 	UpdateFolder(context.Context, string, string, string, *string, bool, int64) (domain.Folder, error)
@@ -601,6 +610,362 @@ func (u *KnowledgeUseCase) PublicHTML(ctx context.Context, id string, version in
 	}
 
 	return u.objects.Get(ctx, k.HTMLKey)
+}
+
+func (u *KnowledgeUseCase) Public(
+	ctx context.Context,
+	id string,
+) (domain.Knowledge, string, string, []domain.PublicRelated, error) {
+	if !domain.ValidPublicID(id) {
+		return domain.Knowledge{}, "", "", nil, domain.ErrNotFound
+	}
+
+	if u.repo == nil {
+		return domain.Knowledge{}, "", "", nil, domain.ErrUnavailable
+	}
+
+	k, err := u.repo.PublicCurrent(ctx, id)
+	if err != nil {
+		return domain.Knowledge{}, "", "", nil, err
+	}
+
+	source := ""
+	summary := ""
+
+	switch k.Format {
+	case "markdown":
+		if u.objects == nil {
+			return domain.Knowledge{}, "", "", nil, domain.ErrUnavailable
+		}
+
+		source, err = u.objects.Get(ctx, k.SourceKey)
+		if err != nil {
+			return domain.Knowledge{}, "", "", nil, err
+		}
+
+		k, source, err = domain.ApplySource(k, source)
+		if err != nil {
+			return domain.Knowledge{}, "", "", nil, domain.ErrUnavailable
+		}
+
+		summary = markdownSummary(source)
+	case "html":
+		if u.objects == nil {
+			return domain.Knowledge{}, "", "", nil, domain.ErrUnavailable
+		}
+
+		if _, err = u.objects.Get(ctx, k.HTMLKey); err != nil {
+			return domain.Knowledge{}, "", "", nil, err
+		}
+	}
+
+	var related []domain.PublicRelated
+
+	if len(k.Tags) > 0 {
+		candidates, relatedErr := u.repo.PublicRelated(ctx, id, k.Tags)
+		if relatedErr == nil {
+			related = make([]domain.PublicRelated, 0, len(candidates))
+			for _, candidate := range candidates {
+				if candidate.PublicID == nil {
+					related = nil
+					break
+				}
+
+				summary := ""
+
+				if candidate.Format == "markdown" {
+					if u.objects == nil {
+						related = nil
+						break
+					}
+
+					candidateSource, getErr := u.objects.Get(ctx, candidate.SourceKey)
+					if getErr != nil {
+						related = nil
+						break
+					}
+
+					candidate, candidateSource, getErr = domain.ApplySource(candidate, candidateSource)
+					if getErr != nil {
+						related = nil
+						break
+					}
+
+					summary = markdownSummary(candidateSource)
+				}
+
+				related = append(related, domain.PublicRelated{
+					PublicID: *candidate.PublicID,
+					Title:    candidate.Title,
+					Format:   candidate.Format,
+					Summary:  summary,
+				})
+			}
+		}
+	}
+
+	return k, source, summary, related, nil
+}
+
+var markdownParser = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+func markdownSummary(body string) string {
+	body = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(body)
+	source := []byte(body)
+	document := markdownParser.Parser().Parse(text.NewReader(source))
+
+	for child := document.FirstChild(); child != nil; child = child.NextSibling() {
+		paragraph, ok := child.(*ast.Paragraph)
+		if !ok {
+			continue
+		}
+
+		summary := markdownParagraphText(paragraph, source)
+		if summary == "" {
+			continue
+		}
+
+		return summary
+	}
+
+	return ""
+}
+
+func markdownParagraphText(paragraph ast.Node, source []byte) string {
+	normalizeMarkdownTextNodes(paragraph, source)
+
+	var rendered bytes.Buffer
+	if err := markdownParser.Renderer().Render(&rendered, source, paragraph); err != nil {
+		return ""
+	}
+
+	document, err := nethtml.Parse(strings.NewReader(rendered.String()))
+	if err != nil {
+		return ""
+	}
+
+	var (
+		plain strings.Builder
+		visit func(*nethtml.Node)
+	)
+
+	visit = func(node *nethtml.Node) {
+		if node.Type == nethtml.TextNode {
+			plain.WriteString(node.Data)
+		}
+
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(document)
+
+	return strings.Join(strings.Fields(plain.String()), " ")
+}
+
+func normalizeMarkdownTextNodes(paragraph ast.Node, source []byte) {
+	var (
+		texts        []*ast.Text
+		stringsNodes []*ast.String
+	)
+
+	_ = ast.Walk(paragraph, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+
+		if node.Kind() == ast.KindImage {
+			return ast.WalkSkipChildren, nil
+		}
+
+		switch node := node.(type) {
+		case *ast.Text:
+			if !node.IsRaw() {
+				texts = append(texts, node)
+			}
+		case *ast.String:
+			if !node.IsRaw() && !node.IsCode() {
+				stringsNodes = append(stringsNodes, node)
+			}
+		}
+
+		return ast.WalkContinue, nil
+	})
+
+	for _, node := range texts {
+		normalizeMarkdownTextNode(node.Parent(), node, source)
+	}
+
+	for _, node := range stringsNodes {
+		normalized := normalizeMarkdownNumericText(node.Value)
+		if normalized != nil {
+			node.Value = normalized
+		}
+	}
+}
+
+func normalizeMarkdownTextNode(parent ast.Node, node *ast.Text, source []byte) {
+	segment := node.Segment
+	raw := source[segment.Start:segment.Stop]
+
+	replacements := markdownInvalidNumericReferences(raw)
+	if len(replacements) == 0 {
+		return
+	}
+
+	replacementNodes := make([]ast.Node, 0, len(replacements)*2+3)
+	if segment.Padding > 0 {
+		replacementNodes = append(replacementNodes, ast.NewString(bytes.Repeat([]byte(" "), segment.Padding)))
+	}
+
+	position := 0
+	for _, replacement := range replacements {
+		if position < replacement.start {
+			replacementNodes = append(replacementNodes, ast.NewTextSegment(markdownTextSegment(
+				segment.Start+position,
+				segment.Start+replacement.start,
+				false,
+			)))
+		}
+
+		replacementNodes = append(replacementNodes, ast.NewString([]byte("�")))
+		position = replacement.end
+	}
+
+	if position < len(raw) {
+		replacementNodes = append(replacementNodes, ast.NewTextSegment(markdownTextSegment(
+			segment.Start+position,
+			segment.Stop,
+			segment.ForceNewline,
+		)))
+	} else if node.SoftLineBreak() || node.HardLineBreak() {
+		replacementNodes = append(replacementNodes, ast.NewTextSegment(markdownTextSegment(
+			segment.Stop,
+			segment.Stop,
+			segment.ForceNewline,
+		)))
+	}
+
+	for index := len(replacementNodes) - 1; index >= 0; index-- {
+		if replacementText, ok := replacementNodes[index].(*ast.Text); ok {
+			replacementText.SetSoftLineBreak(node.SoftLineBreak())
+			replacementText.SetHardLineBreak(node.HardLineBreak())
+
+			break
+		}
+	}
+
+	parent.ReplaceChild(parent, node, replacementNodes[0])
+
+	previous := replacementNodes[0]
+	for _, replacement := range replacementNodes[1:] {
+		parent.InsertAfter(parent, previous, replacement)
+		previous = replacement
+	}
+}
+
+type markdownNumericReplacement struct {
+	start int
+	end   int
+}
+
+func markdownInvalidNumericReferences(source []byte) []markdownNumericReplacement {
+	var replacements []markdownNumericReplacement
+
+	for index := 0; index < len(source); index++ {
+		if source[index] != '&' || markdownTextEscaped(source, index) {
+			continue
+		}
+
+		end, invalid := invalidMarkdownNumericReference(source, index)
+		if invalid {
+			replacements = append(replacements, markdownNumericReplacement{start: index, end: end})
+			index = end - 1
+		}
+	}
+
+	return replacements
+}
+
+func invalidMarkdownNumericReference(source []byte, start int) (int, bool) {
+	if start+2 >= len(source) || source[start] != '&' || source[start+1] != '#' {
+		return start, false
+	}
+
+	valueStart := start + 2
+	base := 10
+	maxDigits := 7
+
+	if source[valueStart] == 'x' || source[valueStart] == 'X' {
+		valueStart++
+		base = 16
+		maxDigits = 6
+	}
+
+	valueEnd := valueStart
+	for valueEnd < len(source) && markdownNumericDigit(source[valueEnd], base) {
+		valueEnd++
+	}
+
+	if valueEnd == valueStart || valueEnd-valueStart > maxDigits || valueEnd >= len(source) || source[valueEnd] != ';' {
+		return start, false
+	}
+
+	value, err := strconv.ParseUint(string(source[valueStart:valueEnd]), base, 32)
+	if err != nil || markdownInvalidCodePoint(value) {
+		return valueEnd + 1, true
+	}
+
+	return start, false
+}
+
+func normalizeMarkdownNumericText(source []byte) []byte {
+	replacements := markdownInvalidNumericReferences(source)
+	if len(replacements) == 0 {
+		return nil
+	}
+
+	normalized := make([]byte, 0, len(source))
+
+	position := 0
+	for _, replacement := range replacements {
+		normalized = append(normalized, source[position:replacement.start]...)
+		normalized = append(normalized, []byte("�")...)
+		position = replacement.end
+	}
+
+	return append(normalized, source[position:]...)
+}
+
+func markdownTextEscaped(source []byte, index int) bool {
+	backslashes := 0
+	for index--; index >= 0 && source[index] == '\\'; index-- {
+		backslashes++
+	}
+
+	return backslashes%2 == 1
+}
+
+func markdownNumericDigit(c byte, base int) bool {
+	if c >= '0' && c <= '9' {
+		return true
+	}
+
+	return base == 16 && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+}
+
+func markdownInvalidCodePoint(code uint64) bool {
+	return code < 9 || code == 11 || code > 13 && code < 32 ||
+		code > 126 && code < 160 || code > 55295 && code < 57344 ||
+		code > 64975 && code < 65008 || code&65535 == 65535 ||
+		code&65535 == 65534 || code > 1114111
+}
+
+func markdownTextSegment(start, stop int, forceNewline bool) text.Segment {
+	segment := text.NewSegment(start, stop)
+	segment.ForceNewline = forceNewline
+
+	return segment
 }
 
 func randomToken() string {

@@ -10,6 +10,7 @@ import { authenticateTestSession, assertCookieIsHostOnly } from "../fixtures/aut
 const origin = "https://app.knowledge.test";
 const certificate = fileURLToPath(new URL("../.manual/ca.crt", import.meta.url));
 const check = process.argv.includes("--check");
+const publicView = process.argv.includes("--public");
 await access(certificate).catch(() => {
   throw new Error("先に task manual:up を実行してください。");
 });
@@ -79,71 +80,180 @@ try {
   process.once("SIGTERM", close);
 
   try {
-    const owner = { key: "owner-a", displayName: "所有者A" } as const;
-    await authenticateTestSession(context, owner);
-    await assertCookieIsHostOnly(context, owner);
-    const page = context.pages()[0];
-    await page.goto(`${origin}/login`);
+    if (publicView) {
+      const page = context.pages()[0];
+      await authenticateTestSession(context, { key: "owner-a", displayName: "所有者A" });
+      await page.goto(`${origin}/login`);
+      const urls: string[] = [];
+      for (const format of ["markdown", "html"] as const) {
+        const source = await readFile(
+          new URL(
+            format === "markdown"
+              ? "../fixtures/files/markdown/public-demo.md"
+              : "../fixtures/files/html/sample.html",
+            import.meta.url,
+          ),
+          "utf8",
+        );
 
-    for (const format of ["markdown", "html"] as const) {
-      const extension = format === "markdown" ? "md" : "html";
+        const url = await page.evaluate(
+          async ({ format, source }) => {
+            const fixture = await fetch("/api/v1/__e2e/fixtures", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ owner: "a", format, source }),
+            });
 
-      const source = await readFile(
-        new URL(`../fixtures/files/${format}/sample.${extension}`, import.meta.url),
-        "utf8",
+            if (fixture.status !== 201) throw new Error(`fixture作成失敗: ${fixture.status}`);
+
+            const fixtureBody: unknown = await fixture.json();
+            if (
+              typeof fixtureBody !== "object" ||
+              fixtureBody === null ||
+              !("draftId" in fixtureBody) ||
+              typeof fixtureBody.draftId !== "string"
+            )
+              throw new Error("fixture応答にdraft IDがありません。");
+
+            const { draftId } = fixtureBody;
+
+            const commit = await fetch(`/api/v1/knowledge-drafts/${draftId}/commit`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ version: 1, source }),
+            });
+
+            if (commit.status !== 201) throw new Error(`正式保存失敗: ${commit.status}`);
+
+            const commitBody: unknown = await commit.json();
+            if (
+              typeof commitBody !== "object" ||
+              commitBody === null ||
+              !("knowledgeId" in commitBody) ||
+              typeof commitBody.knowledgeId !== "string"
+            )
+              throw new Error("正式保存応答にIDがありません。");
+
+            const { knowledgeId } = commitBody;
+
+            const publish = await fetch(`/api/v1/knowledge/${knowledgeId}/visibility`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ version: 1, visibility: "unlisted" }),
+            });
+
+            if (publish.status !== 200) throw new Error(`公開失敗: ${publish.status}`);
+
+            const publishBody: unknown = await publish.json();
+            if (
+              typeof publishBody !== "object" ||
+              publishBody === null ||
+              !("publicUrl" in publishBody) ||
+              typeof publishBody.publicUrl !== "string"
+            )
+              throw new Error("公開応答にURLがありません。");
+
+            const { publicUrl } = publishBody;
+            return publicUrl;
+          },
+          { format, source },
+        );
+
+        urls.push(url);
+      }
+      await context.clearCookies();
+      await expect(context.cookies()).resolves.toHaveLength(0);
+      await page.goto(urls[0]);
+      await expect(
+        page.getByRole("heading", { name: "Markdown表示サンプル", exact: true }).first(),
+      ).toBeVisible();
+      await expect(page.getByRole("navigation", { name: "このページ" })).toContainText(
+        "コードブロック",
       );
+      await expect(page.locator(".knowledge-markdown table")).toBeVisible();
+      await expect(page.locator(".knowledge-markdown blockquote")).toContainText("重要なポイント");
+      await expect(page.locator(".knowledge-markdown input[type=checkbox]")).toHaveCount(2);
+      const html = await context.newPage();
+      await html.goto(urls[1]);
+      await expect(html.frameLocator("iframe").locator("h1")).toHaveText("E2E HTML");
+      await page.bringToFront();
+      console.log(`Markdown公開: ${urls[0]}`);
+      console.log(`HTML公開: ${urls[1]}`);
+      if (!check) {
+        console.log(
+          "公開画面を確認できます。ブラウザを閉じると終了します。環境停止: task manual:down",
+        );
+        await context.waitForEvent("close", { timeout: 0 });
+      }
+    } else {
+      const owner = { key: "owner-a", displayName: "所有者A" } as const;
+      await authenticateTestSession(context, owner);
+      await assertCookieIsHostOnly(context, owner);
+      const page = context.pages()[0];
+      await page.goto(`${origin}/login`);
 
-      // ブラウザから既存fixture APIへ接続し、DB/MinIOへ実データを作る。
-      const draftId = await page.evaluate(
-        async (input) => {
-          const response = await fetch("/api/v1/__e2e/fixtures", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ owner: "a", ...input }),
-          });
+      for (const format of ["markdown", "html"] as const) {
+        const extension = format === "markdown" ? "md" : "html";
 
-          if (response.status !== 201) throw new Error(`fixture作成失敗: ${response.status}`);
-          const body: unknown = await response.json();
-          if (
-            !body ||
-            typeof body !== "object" ||
-            !("draftId" in body) ||
-            typeof body.draftId !== "string" ||
-            !/^[0-9a-f-]{36}$/.test(body.draftId)
-          )
-            throw new Error("fixture応答にdraft IDがありません。");
-          return body.draftId;
-        },
-        { format, source },
-      );
+        const source = await readFile(
+          new URL(`../fixtures/files/${format}/sample.${extension}`, import.meta.url),
+          "utf8",
+        );
 
-      const editor = await context.newPage();
-      const url = `${origin}/knowledge-drafts/${draftId}/edit?mode=editor`;
-      await editor.goto(url);
-      await expect(editor.locator("#knowledge-source")).toHaveValue(source, { timeout: 15_000 });
-      console.log(`${format}: ${url}`);
+        // ブラウザから既存fixture APIへ接続し、DB/MinIOへ実データを作る。
+        const draftId = await page.evaluate(
+          async (input) => {
+            const response = await fetch("/api/v1/__e2e/fixtures", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ owner: "a", ...input }),
+            });
 
-      if (check) {
-        await editor.getByRole("button", { name: "正式保存", exact: true }).click();
-        await expect(editor).toHaveURL(/\/knowledge\/[0-9a-f-]+\/edit(?:\?.*)?$/, {
-          timeout: 15_000,
-        });
-        await editor.goto(`${editor.url().split("?")[0]}?mode=editor`);
+            if (response.status !== 201) throw new Error(`fixture作成失敗: ${response.status}`);
+            const body: unknown = await response.json();
+            if (
+              !body ||
+              typeof body !== "object" ||
+              !("draftId" in body) ||
+              typeof body.draftId !== "string" ||
+              !/^[0-9a-f-]{36}$/.test(body.draftId)
+            )
+              throw new Error("fixture応答にdraft IDがありません。");
+            return body.draftId;
+          },
+          { format, source },
+        );
+
+        const editor = await context.newPage();
+        const url = `${origin}/knowledge-drafts/${draftId}/edit?mode=editor`;
+        await editor.goto(url);
         await expect(editor.locator("#knowledge-source")).toHaveValue(source, { timeout: 15_000 });
-        if (format === "html") {
-          await editor.getByRole("button", { name: "プレビュー", exact: true }).click();
-          await expect(editor.frameLocator("iframe").locator("h1")).toHaveText("E2E HTML");
+        console.log(`${format}: ${url}`);
+
+        if (check) {
+          await editor.getByRole("button", { name: "正式保存", exact: true }).click();
+          await expect(editor).toHaveURL(/\/knowledge\/[0-9a-f-]+\/edit(?:\?.*)?$/, {
+            timeout: 15_000,
+          });
+          await editor.goto(`${editor.url().split("?")[0]}?mode=editor`);
+          await expect(editor.locator("#knowledge-source")).toHaveValue(source, {
+            timeout: 15_000,
+          });
+          if (format === "html") {
+            await editor.getByRole("button", { name: "プレビュー", exact: true }).click();
+            await expect(editor.frameLocator("iframe").locator("h1")).toHaveText("E2E HTML");
+          }
         }
       }
-    }
-    await page.close();
-    if (check) {
-      console.log("手動環境: TLS・認証fixture・2形式の正式保存/再読込・HTML隔離表示 PASS");
-    } else {
-      console.log(
-        "正式保存・編集を試せます。ブラウザを閉じるとこのコマンドが終了します。環境停止: task manual:down",
-      );
-      await context.waitForEvent("close", { timeout: 0 });
+      await page.close();
+      if (check) {
+        console.log("手動環境: TLS・認証fixture・2形式の正式保存/再読込・HTML隔離表示 PASS");
+      } else {
+        console.log(
+          "正式保存・編集を試せます。ブラウザを閉じるとこのコマンドが終了します。環境停止: task manual:down",
+        );
+        await context.waitForEvent("close", { timeout: 0 });
+      }
     }
   } finally {
     process.removeListener("SIGINT", close);
