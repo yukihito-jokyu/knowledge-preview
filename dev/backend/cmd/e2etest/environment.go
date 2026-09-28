@@ -26,12 +26,16 @@ func requireTestEnvironment() error {
 }
 
 func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
-	var exists bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.knowledge') IS NOT NULL`).Scan(&exists); err != nil {
+	var applied [3]bool
+	if err := pool.QueryRow(ctx, `SELECT
+		to_regclass('public.knowledge') IS NOT NULL,
+		to_regclass('public.auth_users') IS NOT NULL,
+		EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='knowledge' AND column_name='search_text_ready')`).
+		Scan(&applied[0], &applied[1], &applied[2]); err != nil {
 		return err
 	}
 
-	if exists {
+	if applied[0] && applied[1] && applied[2] {
 		return nil
 	}
 
@@ -40,7 +44,11 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 
-	for _, path := range paths {
+	for i, path := range paths {
+		if applied[i] {
+			continue
+		}
+
 		migration, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read migration: %w", err)
